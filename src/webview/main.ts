@@ -83,6 +83,10 @@ const fdlg = document.getElementById('fdlg')!;
 const legend = document.getElementById('legend')!;
 const selBar = document.getElementById('sel')!;
 
+// The top bar wraps onto several lines in narrow panels: keep the graph area and dialogs below its real height
+const barEl = document.getElementById('bar')!;
+new ResizeObserver(() => document.documentElement.style.setProperty('--bar-h', `${barEl.offsetHeight}px`)).observe(barEl);
+
 // ---------------------------------------------------------------- helpers
 const el = (n: string, a: Record<string, string | number> = {}, txt?: string) => {
   const e = document.createElementNS(NS, n);

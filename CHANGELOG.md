@@ -5,6 +5,7 @@
 - GCS sync copies only `.py` files and skips `tests/` and `__pycache__/` (configurable with `dbtAirflow.dagsSyncExclude`), so test data in a bucket is never downloaded.
 - GCS sync falls back to `gsutil` when `gcloud` itself crashes, and explains the crash.
 - The cache marker now lives outside the mirrored folder, so pruning can no longer delete it.
+- The graph area and dialogs follow the real height of the top bar, so **Fit** no longer slides the first row of nodes under it in narrow panels.
 
 ## 0.1.0 — first public release
 

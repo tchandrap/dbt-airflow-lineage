@@ -492,7 +492,7 @@ body{margin:0;height:100vh;position:relative;overflow:hidden;font-family:var(--v
 #float input{width:260px;border:0;background:transparent;color:var(--vscode-input-foreground);padding:8px 4px;font:inherit;outline:none}
 #float button{border-radius:0;background:transparent;color:var(--vscode-foreground);border-left:1px solid var(--vscode-panel-border);padding:8px 11px;font-size:13px}
 #float button:hover{background:var(--vscode-list-hoverBackground)}#float button.on{background:var(--vscode-button-background);color:var(--vscode-button-foreground);outline:none}
-svg#graph{position:absolute;top:34px;left:0;width:100%;height:calc(100% - 34px);cursor:grab;touch-action:none}
+svg#graph{position:absolute;top:var(--bar-h,34px);left:0;width:100%;height:calc(100% - var(--bar-h,34px));cursor:grab;touch-action:none}
 svg#graph.grabbing{cursor:grabbing}
 .muted{opacity:.65}.row{display:flex;gap:6px;margin:6px 0 2px;flex-wrap:wrap;align-items:center}
 button{background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:0;padding:3px 9px;border-radius:3px;cursor:pointer;font-size:11px}
@@ -502,7 +502,7 @@ input[type=text],textarea,select{background:var(--vscode-input-background);color
 input[type=text],textarea{width:100%}textarea{resize:vertical;min-height:54px}
 a{cursor:pointer}.chip{display:inline-flex;gap:4px;align-items:center;background:var(--vscode-badge-background);color:var(--vscode-badge-foreground);border-radius:10px;padding:1px 8px;margin:1px 3px 1px 0}
 .chip a{opacity:.8}
-.dialog{display:none;position:absolute;top:56px;bottom:58px;width:360px;z-index:4;overflow:auto;border:1px solid var(--vscode-panel-border);border-radius:6px;background:var(--vscode-editorWidget-background,var(--vscode-editor-background));box-shadow:0 4px 16px #0006}
+.dialog{display:none;position:absolute;top:calc(var(--bar-h,34px) + 12px);bottom:58px;width:360px;z-index:4;overflow:auto;border:1px solid var(--vscode-panel-border);border-radius:6px;background:var(--vscode-editorWidget-background,var(--vscode-editor-background));box-shadow:0 4px 16px #0006}
 .dialog.show{display:block}#ldlg{left:10px}#dlg{right:10px}
 #fdlg{right:12px;top:auto;bottom:54px;max-height:calc(100% - 100px);z-index:7}
 .seg{display:flex;gap:4px}.seg button{flex:1}
