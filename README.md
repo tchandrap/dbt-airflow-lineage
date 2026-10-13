@@ -2,7 +2,9 @@
 
 A VS Code extension that draws your **dbt lineage** and shows, on every model, **which Airflow pipelines run it** and **which pipeline ingests it**. It understands dbt selectors (`tag:daily`, `model+`, `1+model+1`, `--exclude …`), so the pipelines you see are the ones whose selection really includes the model.
 
-![Lineage graph with Airflow badges](docs/graph.png)
+![A 30-second tour: lineage, Airflow pipelines, selector search, filters and YAML editing](docs/demo.gif)
+
+*A 30-second tour on a made-up shop project: click a model, see which Airflow pipelines run it, search with dbt selectors, filter, find the ingestion pipeline of a source, and edit the YAML in place.*
 
 ## What you get
 
