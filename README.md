@@ -74,10 +74,10 @@ The setup wizard offers three choices:
 | Choice | What it does |
 |---|---|
 | **Local folder** | Pick one or more folders that contain your DAG code (for example a checkout of your Airflow repo). Press **Rescan DAGs** after the code changes. |
-| **Google Cloud Storage** | Checks that `gcloud` is installed and you are signed in, lets you **browse buckets and folders** (or type `gs://bucket/dags`), tests that you can read the path, and mirrors the DAGs into a private cache folder. Press **Sync DAGs** to refresh. If your login has expired it offers to run `gcloud auth login` in a terminal, or switch account, and then retries. |
+| **Google Cloud Storage** | Checks that `gcloud` is installed and you are signed in, lets you **browse buckets and folders** (or type `gs://bucket/dags`), tests that you can read the path, and mirrors the DAG code into a private cache folder. Press **Sync DAGs** to refresh. If your login has expired it offers to run `gcloud auth login` in a terminal, or switch account, and then retries. |
 | **Not now** | Lineage only. |
 
-Nothing is downloaded until you choose Google Cloud Storage and confirm. The copy lives in the extension's own storage by default (or a folder you choose, in an `airflow-dags-cache` sub-folder that is the only place the extension ever deletes from).
+Nothing is downloaded until you choose Google Cloud Storage and confirm. Only `.py` files are copied (the extension only reads DAG source code), and `tests/` and `__pycache__/` folders are skipped, so test data in a bucket is never downloaded; change this with `dbtAirflow.dagsSyncExclude` (Python regexes, matched against the path inside the bucket folder; no commas). The copy lives in the extension's own storage by default (or a folder you choose, in an `airflow-dags-cache` sub-folder that is the only place the extension ever deletes from).
 
 ## Using the graph
 
@@ -107,6 +107,7 @@ Search for "dbt Airflow" in Settings, or edit `settings.json`:
 | `dbtAirflow.airflowPaths` | `[]` | DAG folders for the local source. |
 | `dbtAirflow.dagsBucket` | empty | `gs://bucket/folder` for the GCS source. |
 | `dbtAirflow.dagsDownloadDir` | extension storage | Where to keep the downloaded DAGs. |
+| `dbtAirflow.dagsSyncExclude` | only `.py`, no `tests/` | Regexes for bucket objects *not* to download (see below). |
 | `dbtAirflow.upstreamDepth` / `downstreamDepth` | `2` / `2` | Levels shown around the focused model. |
 | `dbtAirflow.dbtCommand` | `dbt` | Command used by **Run dbt parse**. |
 
@@ -143,6 +144,7 @@ Search for "dbt Airflow" in Settings, or edit `settings.json`:
 | Nothing happens after installing | Reload the window; open the dbt project folder (the one containing `dbt_project.yml`). |
 | No pipelines shown | Run **Set up Airflow pipelines…**; check the DAG folder really contains the DAG `.py` files. |
 | "Reauthentication failed" when syncing | Choose **Sign in with gcloud** in the dialog, or run `gcloud auth login` yourself. |
+| "gcloud crashed (TypeError …)" when syncing | That is a bug inside `gcloud` that hides the real error. The extension retries with `gsutil`; also try `gcloud components update`, and point the path at the DAGs folder rather than the bucket root. |
 | A model shows no YAML | It is not declared in any properties `.yml`, or it belongs to an installed package. |
 | Details of the last operation | **View → Output → dbt Airflow Lineage**. |
 

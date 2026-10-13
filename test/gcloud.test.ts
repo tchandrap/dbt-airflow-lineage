@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { classifyGcloudError, isValidGcsPath, normalizeGcs, parentGcs, parseLs, shortError } from '../src/gcloud';
+import { buildExcludeRegex, classifyGcloudError, DEFAULT_SYNC_EXCLUDE, isValidGcsPath, normalizeGcs, parentGcs, parseLs, shortError } from '../src/gcloud';
 
 describe('classifyGcloudError', () => {
   it('recognises the expired-login error from the screenshot', () => {
@@ -39,5 +39,26 @@ describe('parseLs / shortError', () => {
     const e = shortError({ out: '', err: 'ERROR: (gcloud.storage.ls) bucket nope not found\nPlease run:\n  $ gcloud auth login\nto obtain new credentials.' });
     expect(e).toContain('bucket nope not found');
     expect(e).not.toContain('$ gcloud');
+  });
+});
+
+describe('gcloud crash', () => {
+  it('recognises the crash from the screenshot (so we can fall back to gsutil)', () => {
+    const err = "ERROR: gcloud crashed (TypeError): ExecutionError.__init__() missing 1 required positional argument: 'error'\n\nIf you would like to report this issue, please run the following command:\n  gcloud feedback";
+    expect(classifyGcloudError({ code: 1, err, out: '' })).toBe('crash');
+  });
+});
+
+describe('sync exclusions', () => {
+  const re = new RegExp(buildExcludeRegex(DEFAULT_SYNC_EXCLUDE));
+  it('keeps DAG python files and skips test data, other file types and test folders', () => {
+    for (const keep of ['my_dag.py', 'finance/daily/dag_a.py', 'mytests/x.py', 'tests_helpers/x.py']) expect(re.test(keep), keep).toBe(false);
+    for (const skip of ['tests/data/mambu_reconciliation/transaction/history.json', 'finance/config.yaml', 'README.md', 'a/tests/test_dag.py', 'test/x.py', 'a/__pycache__/x.cpython-311.pyc', '.dbt-airflow-lineage-cache']) expect(re.test(skip), skip).toBe(true);
+  });
+  it('rejects commas and invalid regexes, ignores blanks', () => {
+    expect(() => buildExcludeRegex(['a{1,3}'])).toThrow(/comma/);
+    expect(() => buildExcludeRegex(['(unclosed'])).toThrow(/not a valid regular expression/);
+    expect(buildExcludeRegex(['  ', ''])).toBe('');
+    expect(buildExcludeRegex(['a', 'b'])).toBe('(?:a)|(?:b)');
   });
 });

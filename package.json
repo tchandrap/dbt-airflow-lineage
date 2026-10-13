@@ -187,6 +187,17 @@
           "type": "string",
           "default": "",
           "description": "Optional folder for the downloaded GCS DAGs. A sub-folder \"airflow-dags-cache\" is created there and is the only thing ever modified. Empty = extension storage."
+        },
+        "dbtAirflow.dagsSyncExclude": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "^(?!.*\\.py$).*",
+            "^(.*/)?(tests?|__pycache__)/.*"
+          ],
+          "description": "Python regexes (matched against paths relative to the bucket folder) for objects NOT to download when syncing DAGs from GCS. The default copies only .py files and skips test and cache folders, which avoids downloading test data. Patterns cannot contain commas."
         }
       }
     },
