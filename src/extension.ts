@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { fork, spawn } from 'child_process';
-import { classifyGcloudError, isValidGcsPath, normalizeGcs, parentGcs, parseLs, runCli, RunResult, shortError } from './gcloud';
+import { buildExcludeRegex, classifyGcloudError, DEFAULT_SYNC_EXCLUDE, isValidGcsPath, normalizeGcs, parentGcs, parseLs, runCli, RunResult, shortError } from './gcloud';
 import { LineageIndex, ResolvedPipeline, scanAirflow } from './index';
 import { applyEdits, readMeta, Edits, MetaError, Target } from './meta';
 import { buildPayload, defaultFilter, FilterState } from './payload';
@@ -55,11 +55,13 @@ function airflowSource(): AirflowSource {
 }
 const configTarget = () => (vscode.workspace.workspaceFolders?.length ? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global);
 
-/** Where the bucket is mirrored. Always a dedicated sub-folder, so pruning can never touch anything else. */
-function dagsCacheDir(): string {
+/** Root of everything we own on disk for GCS: the marker lives here, the mirrored files live in `<root>/dags`. */
+function dagsCacheRoot(): string {
   const custom = cfg().get<string>('dagsDownloadDir', '').trim();
-  return custom ? path.join(custom, 'airflow-dags-cache') : path.join(ctx.globalStorageUri.fsPath, 'airflow-dags');
+  return custom ? path.join(custom, 'airflow-dags-cache') : path.join(ctx.globalStorageUri.fsPath, 'airflow-dags-cache');
 }
+/** The folder rsync mirrors into (and the only one that is scanned). Kept apart from the marker so pruning cannot delete it. */
+const dagsCacheDir = () => path.join(dagsCacheRoot(), 'dags');
 
 function airflowDirs(): string[] {
   const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
@@ -125,25 +127,38 @@ async function syncDags() {
     vscode.window.showErrorMessage(`"${bucket}" is not a valid gs:// path.`, 'Fix it…').then((c) => c && setupAirflow());
     return postSync('error', 'Invalid bucket path');
   }
+  const root = dagsCacheRoot();
   const dest = dagsCacheDir();
-  const fresh = !fs.existsSync(dest) || fs.readdirSync(dest).length === 0;
+  const markerPath = path.join(root, CACHE_MARKER);
+  const rootIsOurs = !fs.existsSync(root) || fs.readdirSync(root).length === 0 || fs.existsSync(markerPath);
   fs.mkdirSync(dest, { recursive: true });
-  if (fresh) fs.writeFileSync(path.join(dest, CACHE_MARKER), 'Managed by the dbt Airflow Lineage extension. Files here are mirrored from GCS and may be deleted on sync.\n');
-  const prune = fs.existsSync(path.join(dest, CACHE_MARKER)); // never delete in a folder we did not create
+  if (rootIsOurs && !fs.existsSync(markerPath)) fs.writeFileSync(markerPath, 'Managed by the dbt Airflow Lineage extension. Files in ./dags are mirrored from GCS and may be deleted on sync.\n');
+  const prune = fs.existsSync(markerPath); // never delete in a folder we did not create
+  let exclude = '';
+  try { exclude = buildExcludeRegex(cfg().get<string[]>('dagsSyncExclude', DEFAULT_SYNC_EXCLUDE)); }
+  catch (e: any) { vscode.window.showErrorMessage(`dbtAirflow.dagsSyncExclude: ${e.message}`); return postSync('error', 'Invalid exclude pattern'); }
   syncing = true;
   postSync('running', `Syncing ${bucket}…`);
-  out.appendLine(`Syncing ${bucket} → ${dest}${prune ? '' : ' (no pruning: folder has no marker)'}`);
+  out.appendLine(`Syncing ${bucket} → ${dest}${prune ? '' : ' (no pruning: folder was not created by this extension)'}${exclude ? `\nOnly copying files not matching: ${exclude}` : ''}`);
   try {
     const r = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Syncing Airflow DAGs from GCS…' }, async () => {
-      const args = ['storage', 'rsync', '--recursive', ...(prune ? ['--delete-unmatched-destination-objects'] : []), bucket, dest];
+      const args = ['storage', 'rsync', '--recursive', ...(prune ? ['--delete-unmatched-destination-objects'] : []), ...(exclude ? [`--exclude=${exclude}`] : []), bucket, dest];
       let res = await gcloud(args);
-      if (res.code === 'ENOENT') res = await runCli('gsutil', ['-m', 'rsync', '-r', ...(prune ? ['-d'] : []), bucket, dest], (s) => out.append(s));
+      const gsutilArgs = ['-m', 'rsync', '-r', ...(prune ? ['-d'] : []), ...(exclude ? ['-x', exclude] : []), bucket, dest];
+      if (res.code === 'ENOENT') res = await runCli('gsutil', gsutilArgs, (s) => out.append(s));
+      else if (res.code !== 0 && classifyGcloudError(res) === 'crash') {
+        // gcloud's own error handling crashed and hides the real cause: gsutil usually reports it, or just works
+        out.appendLine('\ngcloud crashed; retrying with gsutil…');
+        const alt = await runCli('gsutil', gsutilArgs, (s) => out.append(s));
+        if (alt.code !== 'ENOENT') res = alt;
+      }
       return res;
     });
     if (r.code !== 0) {
       const p = classifyGcloudError(r);
-      const why = p === 'forbidden' ? 'Your account cannot read this bucket.' : p === 'not-found' ? 'The bucket or folder was not found.' : p === 'auth' ? 'Not signed in.' : '';
-      throw Object.assign(new Error(`${why} ${shortError(r) || 'sync failed'}`.trim()), { problem: p });
+      const why = p === 'forbidden' ? 'Your account cannot read this bucket.' : p === 'not-found' ? 'The bucket or folder was not found.' : p === 'auth' ? 'Not signed in.'
+        : p === 'crash' ? 'gcloud crashed while downloading (a gcloud bug that hides the real error). Try `gcloud components update`, install gsutil, or narrow the path.' : '';
+      throw Object.assign(new Error(`${why} ${p === 'crash' ? '' : shortError(r) || 'sync failed'}`.trim()), { problem: p });
     }
     await ctx.globalState.update('dagsSyncedAt', Date.now());
     index = undefined; loading = undefined;
