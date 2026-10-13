@@ -1,7 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.1.1 — 2026-10-13
 
+- No longer marked as a preview: the Marketplace "Preview" badge is gone.
 - README: animated demo of the extension in action (`docs/demo.gif`).
 - GCS sync copies only `.py` files and skips `tests/` and `__pycache__/` (configurable with `dbtAirflow.dagsSyncExclude`), so test data in a bucket is never downloaded.
 - GCS sync falls back to `gsutil` when `gcloud` itself crashes, and explains the crash.
