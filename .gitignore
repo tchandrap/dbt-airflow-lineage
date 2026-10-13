@@ -1,0 +1,6 @@
+node_modules/
+dist/
+*.vsix
+.DS_Store
+# local scratch (real project data / machine paths) — never commit
+test/tmp/

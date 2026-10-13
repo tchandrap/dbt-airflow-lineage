@@ -1,0 +1,219 @@
+{
+  "name": "dbt-airflow-lineage",
+  "displayName": "dbt Lineage + Airflow Pipelines",
+  "description": "Interactive dbt lineage graph that also shows which Airflow pipelines run and ingest each model, resolving dbt selectors (tags, graph operators, excludes). Edit model YAML in place.",
+  "version": "0.1.0",
+  "publisher": "tchandrap",
+  "license": "MIT",
+  "author": {
+    "name": "Tri Chandra Pamungkas",
+    "url": "https://github.com/tchandrap"
+  },
+  "preview": true,
+  "icon": "media/icon.png",
+  "galleryBanner": {
+    "color": "#1e1b4b",
+    "theme": "dark"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tchandrap/dbt-airflow-lineage.git"
+  },
+  "bugs": {
+    "url": "https://github.com/tchandrap/dbt-airflow-lineage/issues"
+  },
+  "homepage": "https://github.com/tchandrap/dbt-airflow-lineage#readme",
+  "keywords": [
+    "dbt",
+    "lineage",
+    "airflow",
+    "data",
+    "bigquery",
+    "data engineering",
+    "selectors",
+    "sql",
+    "yaml",
+    "analytics engineering"
+  ],
+  "categories": [
+    "Visualization",
+    "Data Science",
+    "Other"
+  ],
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "activationEvents": [
+    "workspaceContains:**/dbt_project.yml"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "dbtAirflow.showLineage",
+        "title": "dbt Airflow: Show Lineage for Current Model"
+      },
+      {
+        "command": "dbtAirflow.refresh",
+        "title": "dbt Airflow: Refresh (re-read manifest and DAGs)"
+      },
+      {
+        "command": "dbtAirflow.runParse",
+        "title": "dbt Airflow: Run dbt parse"
+      },
+      {
+        "command": "dbtAirflow.showPipelines",
+        "title": "dbt Airflow: Pipelines Triggering Current Model"
+      },
+      {
+        "command": "dbtAirflow.setupAirflow",
+        "title": "dbt Airflow: Set up Airflow pipelines\u2026",
+        "icon": "$(gear)"
+      },
+      {
+        "command": "dbtAirflow.syncDags",
+        "title": "dbt Airflow: Sync Airflow DAGs from GCS",
+        "icon": "$(cloud-download)"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "dbtAirflow",
+          "title": "dbt + Airflow",
+          "icon": "media/activity.svg"
+        }
+      ],
+      "panel": [
+        {
+          "id": "dbtAirflowPanel",
+          "title": "dbt Airflow Lineage",
+          "icon": "media/activity.svg"
+        }
+      ]
+    },
+    "views": {
+      "dbtAirflowPanel": [
+        {
+          "id": "dbtAirflow.lineage",
+          "name": "Lineage",
+          "type": "webview"
+        }
+      ],
+      "dbtAirflow": [
+        {
+          "id": "dbtAirflow.pipelines",
+          "name": "Airflow pipelines"
+        },
+        {
+          "id": "dbtAirflow.current",
+          "name": "Current model"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "dbtAirflow.syncDags",
+          "when": "view == dbtAirflow.pipelines && config.dbtAirflow.airflowSource == 'gcs'",
+          "group": "navigation@1"
+        },
+        {
+          "command": "dbtAirflow.setupAirflow",
+          "when": "view == dbtAirflow.pipelines",
+          "group": "navigation@2"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "dbt Airflow Lineage",
+      "properties": {
+        "dbtAirflow.projectDir": {
+          "type": "string",
+          "default": "",
+          "description": "dbt project dir (contains dbt_project.yml). Empty = auto-detect in the workspace."
+        },
+        "dbtAirflow.manifestPath": {
+          "type": "string",
+          "default": "target/manifest.json",
+          "description": "Manifest path, relative to the dbt project dir."
+        },
+        "dbtAirflow.airflowPaths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Absolute or workspace-relative directories holding Airflow DAG code (scanned recursively for .py)."
+        },
+        "dbtAirflow.dagsBucket": {
+          "type": "string",
+          "default": "",
+          "description": "GCS folder that holds the Airflow DAGs when airflowSource is gcs, e.g. gs://my-bucket/dags. Uses gcloud with your own credentials."
+        },
+        "dbtAirflow.dbtCommand": {
+          "type": "string",
+          "default": "dbt",
+          "description": "Command used by 'Run dbt parse'."
+        },
+        "dbtAirflow.upstreamDepth": {
+          "type": "number",
+          "default": 2,
+          "description": "How many levels upstream of the focused model are shown."
+        },
+        "dbtAirflow.downstreamDepth": {
+          "type": "number",
+          "default": 2,
+          "description": "How many levels downstream of the focused model are shown."
+        },
+        "dbtAirflow.airflowSource": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "none",
+            "local",
+            "gcs"
+          ],
+          "enumDescriptions": [
+            "Use \"local\" when airflowPaths is set, otherwise no Airflow pipelines.",
+            "Do not show Airflow pipelines.",
+            "Read DAGs from the folder(s) in airflowPaths.",
+            "Mirror DAGs from a Google Cloud Storage bucket (dagsBucket)."
+          ],
+          "default": "auto",
+          "description": "Where Airflow pipelines come from. Use \"dbt Airflow: Set up Airflow pipelines\u2026\" for a guided setup."
+        },
+        "dbtAirflow.dagsDownloadDir": {
+          "type": "string",
+          "default": "",
+          "description": "Optional folder for the downloaded GCS DAGs. A sub-folder \"airflow-dags-cache\" is created there and is the only thing ever modified. Empty = extension storage."
+        }
+      }
+    },
+    "viewsWelcome": [
+      {
+        "view": "dbtAirflow.pipelines",
+        "contents": "Airflow pipelines are optional. Connect a local DAGs folder or a Google Cloud Storage bucket to see which pipelines run each model.\n[Set up Airflow pipelines](command:dbtAirflow.setupAirflow)",
+        "when": "config.dbtAirflow.airflowSource != 'gcs' && config.dbtAirflow.airflowSource != 'local'"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "test": "vitest run",
+    "package": "npm run build && vsce package"
+  },
+  "devDependencies": {
+    "@dagrejs/dagre": "^1.1.4",
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.0.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.6.0",
+    "vitest": "^3.0.0"
+  },
+  "dependencies": {
+    "yaml": "^2.9.1"
+  }
+}
