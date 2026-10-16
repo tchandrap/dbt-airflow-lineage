@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Renamed the display name to **dbt Airflow Lineage** (the extension ID `tchandrap.dbt-airflow-lineage` is unchanged, so updates keep working). The activity bar entry uses the same name.
+
 ## 0.1.1 — 2026-10-13
 
 - No longer marked as a preview: the Marketplace "Preview" badge is gone.

@@ -1,6 +1,6 @@
 {
   "name": "dbt-airflow-lineage",
-  "displayName": "dbt Lineage + Airflow Pipelines",
+  "displayName": "dbt Airflow Lineage",
   "description": "Interactive dbt lineage graph that also shows which Airflow pipelines run and ingest each model, resolving dbt selectors (tags, graph operators, excludes). Edit model YAML in place.",
   "version": "0.1.1",
   "publisher": "tchandrap",
@@ -79,7 +79,7 @@
       "activitybar": [
         {
           "id": "dbtAirflow",
-          "title": "dbt + Airflow",
+          "title": "dbt Airflow Lineage",
           "icon": "media/activity.svg"
         }
       ],
