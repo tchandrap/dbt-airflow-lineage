@@ -2,9 +2,15 @@ name: Release
 
 # Push a tag like v0.1.0 to build the extension, attach the .vsix to a GitHub release,
 # and (only if the matching secrets exist) publish to the VS Code Marketplace and Open VSX.
+# "Run workflow" with a tag (e.g. v0.1.2) re-runs the build and the store publishing for an existing release.
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to build and publish (e.g. v0.1.2)
+        required: true
 
 permissions:
   contents: write
@@ -13,10 +19,13 @@ jobs:
   release:
     runs-on: ubuntu-latest
     env:
+      TAG: ${{ inputs.tag || github.ref_name }}
       VSCE_PAT: ${{ secrets.VSCE_PAT }}
       OVSX_PAT: ${{ secrets.OVSX_PAT }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -25,14 +34,23 @@ jobs:
       - run: npm test
       - run: npm run build
       - name: Package
-        run: npx vsce package --skip-license -o "dbt-airflow-lineage-${{ github.ref_name }}.vsix"
+        run: npx vsce package --skip-license -o "dbt-airflow-lineage-$TAG.vsix"
       - name: GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${{ github.ref_name }}" "dbt-airflow-lineage-${{ github.ref_name }}.vsix" --title "${{ github.ref_name }}" --notes-file CHANGELOG.md
+        run: gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" "dbt-airflow-lineage-$TAG.vsix" --title "$TAG" --notes-file CHANGELOG.md
       - name: Publish to VS Code Marketplace
+        id: marketplace
         if: env.VSCE_PAT != ''
-        run: npx vsce publish --skip-license --packagePath "dbt-airflow-lineage-${{ github.ref_name }}.vsix"
+        continue-on-error: true
+        run: npx vsce publish --skip-license --packagePath "dbt-airflow-lineage-$TAG.vsix"
       - name: Publish to Open VSX
+        id: ovsx
         if: env.OVSX_PAT != ''
-        run: npx ovsx publish "dbt-airflow-lineage-${{ github.ref_name }}.vsix" -p "$OVSX_PAT"
+        continue-on-error: true
+        run: npx ovsx publish "dbt-airflow-lineage-$TAG.vsix" -p "$OVSX_PAT"
+      - name: Fail if a store publish failed
+        if: steps.marketplace.outcome == 'failure' || steps.ovsx.outcome == 'failure'
+        run: |
+          echo "Marketplace: ${{ steps.marketplace.outcome }}, Open VSX: ${{ steps.ovsx.outcome }}"
+          exit 1
