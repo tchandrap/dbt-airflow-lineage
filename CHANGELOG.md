@@ -2,7 +2,8 @@
 
 ## Unreleased
 
-- Renamed the display name to **dbt Airflow Lineage** (the extension ID `tchandrap.dbt-airflow-lineage` is unchanged, so updates keep working). The activity bar entry uses the same name.
+- Renamed the display name to **dbt airflow lineage** (lowercase). The extension ID `tchandrap.dbt-airflow-lineage` is unchanged, so updates keep working. The activity bar, bottom panel and output channel use the same name.
+- New icon: the lineage graph with the dbt and Airflow logos as small badges.
 
 ## 0.1.1 — 2026-10-13
 

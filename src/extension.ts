@@ -15,7 +15,7 @@ let projectDir = '';
 let loading: Promise<void> | undefined;
 let view: vscode.WebviewView | undefined;
 let focusId: string | undefined;
-const out = vscode.window.createOutputChannel('dbt Airflow Lineage');
+const out = vscode.window.createOutputChannel('dbt airflow lineage');
 const changed = new vscode.EventEmitter<void>();
 
 const cfg = () => vscode.workspace.getConfiguration('dbtAirflow');
@@ -132,7 +132,7 @@ async function syncDags() {
   const markerPath = path.join(root, CACHE_MARKER);
   const rootIsOurs = !fs.existsSync(root) || fs.readdirSync(root).length === 0 || fs.existsSync(markerPath);
   fs.mkdirSync(dest, { recursive: true });
-  if (rootIsOurs && !fs.existsSync(markerPath)) fs.writeFileSync(markerPath, 'Managed by the dbt Airflow Lineage extension. Files in ./dags are mirrored from GCS and may be deleted on sync.\n');
+  if (rootIsOurs && !fs.existsSync(markerPath)) fs.writeFileSync(markerPath, 'Managed by the dbt airflow lineage extension. Files in ./dags are mirrored from GCS and may be deleted on sync.\n');
   const prune = fs.existsSync(markerPath); // never delete in a folder we did not create
   let exclude = '';
   try { exclude = buildExcludeRegex(cfg().get<string[]>('dagsSyncExclude', DEFAULT_SYNC_EXCLUDE)); }

@@ -1,4 +1,4 @@
-# dbt Airflow Lineage
+# dbt airflow lineage
 
 A VS Code extension that draws your **dbt lineage** and shows, on every model, **which Airflow pipelines run it** and **which pipeline ingests it**. It understands dbt selectors (`tag:daily`, `model+`, `1+model+1`, `--exclude …`), so the pipelines you see are the ones whose selection really includes the model.
 
@@ -33,7 +33,7 @@ A VS Code extension that draws your **dbt lineage** and shows, on every model, *
 
 ### Option 1 — VS Code Marketplace
 
-Open the Extensions view (`Cmd/Ctrl+Shift+X`), search for **dbt Airflow Lineage**, and click **Install**.
+Open the Extensions view (`Cmd/Ctrl+Shift+X`), search for **dbt airflow lineage**, and click **Install**.
 
 > If you don't find it there yet, use Option 2.
 
@@ -148,7 +148,7 @@ Search for "dbt Airflow" in Settings, or edit `settings.json`:
 | "Reauthentication failed" when syncing | Choose **Sign in with gcloud** in the dialog, or run `gcloud auth login` yourself. |
 | "gcloud crashed (TypeError …)" when syncing | That is a bug inside `gcloud` that hides the real error. The extension retries with `gsutil`; also try `gcloud components update`, and point the path at the DAGs folder rather than the bucket root. |
 | A model shows no YAML | It is not declared in any properties `.yml`, or it belongs to an installed package. |
-| Details of the last operation | **View → Output → dbt Airflow Lineage**. |
+| Details of the last operation | **View → Output → dbt airflow lineage**. |
 
 ## Development
 
@@ -178,4 +178,4 @@ Issues and pull requests are welcome.
 
 ## License and notices
 
-[MIT](LICENSE). This project is not affiliated with or endorsed by dbt Labs or the Apache Software Foundation. "dbt" is a trademark of dbt Labs, Inc. "Apache Airflow" and its logo are trademarks of the Apache Software Foundation; the logo shown in the UI is used only to identify Airflow and comes from the [dashboard-icons](https://github.com/homarr-labs/dashboard-icons) collection (Apache-2.0).
+[MIT](LICENSE). This project is not affiliated with or endorsed by dbt Labs or the Apache Software Foundation. "dbt" and the dbt logo are trademarks of dbt Labs, Inc.; "Apache Airflow" and its logo are trademarks of the Apache Software Foundation. The two logos appear only to show which tools the extension works with: in the extension icon and on pipeline badges. The Airflow logo comes from the [dashboard-icons](https://github.com/homarr-labs/dashboard-icons) collection (Apache-2.0) and the dbt mark from [Simple Icons](https://simpleicons.org) (CC0); the marks themselves remain their owners' property.
