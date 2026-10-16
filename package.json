@@ -2,7 +2,7 @@
   "name": "dbt-airflow-lineage",
   "displayName": "dbt airflow lineage",
   "description": "Interactive dbt lineage graph that also shows which Airflow pipelines run and ingest each model, resolving dbt selectors (tags, graph operators, excludes). Edit model YAML in place.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "publisher": "tchandrap",
   "license": "MIT",
   "author": {
@@ -66,7 +66,7 @@
       },
       {
         "command": "dbtAirflow.setupAirflow",
-        "title": "dbt Airflow: Set up Airflow pipelines\u2026",
+        "title": "dbt Airflow: Set up Airflow pipelines…",
         "icon": "$(gear)"
       },
       {
@@ -180,7 +180,7 @@
             "Mirror DAGs from a Google Cloud Storage bucket (dagsBucket)."
           ],
           "default": "auto",
-          "description": "Where Airflow pipelines come from. Use \"dbt Airflow: Set up Airflow pipelines\u2026\" for a guided setup."
+          "description": "Where Airflow pipelines come from. Use \"dbt Airflow: Set up Airflow pipelines…\" for a guided setup."
         },
         "dbtAirflow.dagsDownloadDir": {
           "type": "string",
