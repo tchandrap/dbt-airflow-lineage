@@ -161,7 +161,7 @@ async function syncDags() {
       throw Object.assign(new Error(`${why} ${p === 'crash' ? '' : shortError(r) || 'sync failed'}`.trim()), { problem: p });
     }
     await ctx.globalState.update('dagsSyncedAt', Date.now());
-    index = undefined; loading = undefined;
+    loading = undefined;
     const fresh2 = await ensure();
     changed.fire();
     const n = fresh2?.pipelines.length ?? 0;
@@ -171,8 +171,12 @@ async function syncDags() {
   } catch (e: any) {
     out.appendLine(String(e?.message ?? e));
     postSync('error', String(e?.message ?? e));
-    const buttons = e.problem === 'not-found' || e.problem === 'forbidden' ? ['Change path…', 'Show output'] : ['Set up Airflow…', 'Show output'];
-    vscode.window.showErrorMessage(`DAG sync failed: ${e.message}`, ...buttons).then((c) => { if (c === 'Show output') out.show(); else if (c) void setupAirflow(); });
+    const buttons = e.problem === 'auth' ? ['Sign in with gcloud', 'Show output'] : e.problem === 'not-found' || e.problem === 'forbidden' ? ['Change path…', 'Show output'] : ['Set up Airflow…', 'Show output'];
+    vscode.window.showErrorMessage(`DAG sync failed: ${e.message}`, ...buttons).then(async (c) => {
+      if (c === 'Show output') out.show();
+      else if (c === 'Sign in with gcloud') { if (await signInViaTerminal()) void syncDags(); } // retry once signed in
+      else if (c) void setupAirflow();
+    });
   } finally { syncing = false; }
 }
 let syncing = false;
@@ -327,8 +331,13 @@ async function load(): Promise<void> {
 }
 
 /** Drop the index and rebuild it (manifest or Airflow source changed). */
-function reloadAll() { index = undefined; loading = undefined; void ensure().then(() => { changed.fire(); post(); }); }
-const ensure = async () => { loading ??= load().finally(() => (loading = undefined)); await loading; return index; };
+function reloadAll() { loading = undefined; void ensure().then(() => { changed.fire(); post(); }); } // keeps showing the old graph until the new index is ready
+let busyCount = 0;
+const setBusy = (d: number) => { busyCount += d; view?.webview.postMessage({ type: 'busy', on: busyCount > 0 }); };
+const ensure = async () => {
+  if (!loading) { setBusy(1); const mine = (loading = load().finally(() => { setBusy(-1); if (loading === mine) loading = undefined; })); }
+  await loading; return index;
+};
 
 async function runParse() {
   const cmd = cfg().get<string>('dbtCommand', 'dbt');
@@ -350,7 +359,10 @@ function modelIdForUri(uri: vscode.Uri): string | undefined {
 
 let filter: FilterState = defaultFilter();
 const depthOf = (k: 'upstreamDepth' | 'downstreamDepth') => cfg().get<number>(k, 2);
-const payload = (id: string) => buildPayload(index!, filter, id, depthOf('upstreamDepth'), depthOf('downstreamDepth'));
+const expanded = { up: new Set<string>(), down: new Set<string>() }; // nodes opened with the + buttons (exploration only, never saved)
+const payload = (id: string) => buildPayload(index!, filter, id, depthOf('upstreamDepth'), depthOf('downstreamDepth'), expanded);
+const clearExpanded = () => { expanded.up.clear(); expanded.down.clear(); };
+const DEFAULT_DEPTH = 2;
 
 // ---------------- YAML metadata (description / tests) ----------------
 
@@ -415,7 +427,7 @@ async function showLineage(id?: string) {
     }
   }
   if (!id) return;
-  focusId = id;
+  focusId = id; clearExpanded();
   // Focusing the view resolves it (first time) and brings the bottom-panel tab forward.
   await vscode.commands.executeCommand('dbtAirflow.lineage.focus');
   post();
@@ -431,19 +443,20 @@ class LineageView implements vscode.WebviewViewProvider {
     v.webview.onDidReceiveMessage(async (m) => {
       if (!index) return;
       switch (m.type) {
-        case 'ready': post(); break;
-        case 'refocus': focusId = m.id; post(); break;
+        case 'ready': post(); view?.webview.postMessage({ type: 'busy', on: busyCount > 0 }); break;
+        case 'refocus': focusId = m.id; clearExpanded(); post(); break;
+        case 'expand': if (m.dir === 'up' || m.dir === 'down') { expanded[m.dir as 'up' | 'down'].add(m.id); post(); } break;
         case 'depth': {
           const clamp = (v: unknown) => Math.max(0, Math.min(20, Math.round(Number(v) || 0)));
           await cfg().update('upstreamDepth', clamp(m.up), vscode.ConfigurationTarget.Workspace);
           await cfg().update('downstreamDepth', clamp(m.down), vscode.ConfigurationTarget.Workspace);
-          post(); break;
+          clearExpanded(); post(); break;
         }
         case 'open': openNode(m.id); break;
         case 'loadMeta': sendMeta(m.id); break;
         case 'saveMeta': await saveMeta(m.id, m.edits); break;
         case 'openYaml': await openYaml(m.id); break;
-        case 'setFilter': filter = { ...filter, ...m.filter, scope: 'project', tags: [...(m.filter.tags ?? [])], kinds: [...(m.filter.kinds ?? [])] }; post(); break;
+        case 'setFilter': clearExpanded(); filter = { ...filter, ...m.filter, scope: 'project', tags: [...(m.filter.tags ?? [])], kinds: [...(m.filter.kinds ?? [])] }; post(); break;
         case 'syncDags': await syncDags(); break;
         case 'setupAirflow': await setupAirflow(); break;
         case 'rescan': reloadAll(); break;
@@ -465,7 +478,13 @@ function post() {
 function followActiveEditor() {
   const uri = vscode.window.activeTextEditor?.document.uri;
   const id = uri && modelIdForUri(uri);
-  if (id && id !== focusId && view?.visible) { focusId = id; post(); }
+  if (id && id !== focusId && view?.visible) { focusId = id; clearExpanded(); void resetDepths().then(post); }
+}
+
+/** A different model file: start from the default 2 upstream / 2 downstream again. */
+async function resetDepths() {
+  for (const k of ['upstreamDepth', 'downstreamDepth'] as const)
+    if (depthOf(k) !== DEFAULT_DEPTH) await cfg().update(k, DEFAULT_DEPTH, vscode.ConfigurationTarget.Workspace);
 }
 
 function openNode(id: string) {
@@ -488,12 +507,17 @@ body{margin:0;height:100vh;position:relative;overflow:hidden;font-family:var(--v
 #bar{position:absolute;top:0;left:0;right:0;z-index:5;padding:5px 10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:var(--vscode-editor-background);border-bottom:1px solid var(--vscode-panel-border)}
 #bar input[type=number]{width:44px}
 #float{position:absolute;right:12px;bottom:12px;z-index:6;display:flex;align-items:center;border:1px solid var(--vscode-panel-border);border-radius:6px;background:var(--vscode-editorWidget-background,var(--vscode-editor-background));box-shadow:0 2px 10px #0006;overflow:hidden}
-#float .ic{padding:0 8px;font-size:15px;opacity:.8}
+#qwrap{position:relative;display:flex;align-items:center}#qwrap input{padding-left:12px}
+#ph{position:absolute;left:12px;display:none;align-items:center;gap:7px;opacity:.65;pointer-events:none;white-space:nowrap}#q:placeholder-shown+#ph{display:flex}
 #float input{width:260px;border:0;background:transparent;color:var(--vscode-input-foreground);padding:8px 4px;font:inherit;outline:none}
 #float button{border-radius:0;background:transparent;color:var(--vscode-foreground);border-left:1px solid var(--vscode-panel-border);padding:8px 11px;font-size:13px}
 #float button:hover{background:var(--vscode-list-hoverBackground)}#float button.on{background:var(--vscode-button-background);color:var(--vscode-button-foreground);outline:none}
 svg#graph{position:absolute;top:var(--bar-h,34px);left:0;width:100%;height:calc(100% - var(--bar-h,34px));cursor:grab;touch-action:none}
 svg#graph.grabbing{cursor:grabbing}
+#busy{position:absolute;top:var(--bar-h,34px);left:0;right:0;height:3px;z-index:6;overflow:hidden;pointer-events:none;display:none}
+#busy.on{display:block}#busy::before{content:'';position:absolute;top:0;height:100%;width:30%;background:var(--vscode-progressBar-background,#0e70c0);animation:busy 1.2s ease-in-out infinite}
+@keyframes busy{0%{left:-30%}100%{left:100%}}
+.xbtn{cursor:pointer}.xbtn circle{fill:var(--vscode-editor-background);stroke:var(--vscode-focusBorder);stroke-width:1.6}.xbtn path{stroke:var(--vscode-focusBorder);stroke-width:2;stroke-linecap:round;fill:none}.xbtn:hover circle{fill:var(--vscode-focusBorder)}.xbtn:hover path{stroke:#fff}
 .muted{opacity:.65}.row{display:flex;gap:6px;margin:6px 0 2px;flex-wrap:wrap;align-items:center}
 button{background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:0;padding:3px 9px;border-radius:3px;cursor:pointer;font-size:11px}
 button:hover{background:var(--vscode-button-hoverBackground)}button.sec{background:var(--vscode-button-secondaryBackground,#3a3d41);color:var(--vscode-button-secondaryForeground,#ddd)}
@@ -522,9 +546,10 @@ a{cursor:pointer}.chip{display:inline-flex;gap:4px;align-items:center;background
 .foot{position:sticky;bottom:0;background:inherit;border-top:1px solid var(--vscode-panel-border);padding:8px 10px}
 .fl{display:block;margin:8px 0 3px;font-weight:600}
 .kinds{display:grid;grid-template-columns:1fr 1fr;gap:3px 8px}.kinds label{display:flex;gap:5px;align-items:center}
-#legend{position:absolute;left:10px;bottom:8px;z-index:3;max-width:calc(100% - 540px);min-width:240px;display:flex;flex-wrap:wrap;gap:4px 12px;align-items:center;padding:5px 9px;border:1px solid var(--vscode-panel-border);border-radius:6px;background:var(--vscode-editorWidget-background,var(--vscode-editor-background));opacity:.95}
+.rz{position:absolute;z-index:8;display:none;touch-action:none}.rz:hover,.rz:active{background:var(--vscode-focusBorder);opacity:.55}
+.rzw{width:8px;cursor:ew-resize}.rzh{height:8px;cursor:ns-resize}
+#legend{position:absolute;left:10px;bottom:8px;z-index:3;display:grid;grid-template-columns:repeat(3,auto);gap:5px 16px;align-items:center;justify-items:start;padding:7px 11px;border:1px solid var(--vscode-panel-border);border-radius:6px;background:var(--vscode-editorWidget-background,var(--vscode-editor-background));opacity:.95}
 #legend .li{display:flex;gap:5px;align-items:center;cursor:default}#legend .li.k{cursor:pointer}#legend .li.k.off{opacity:.35}
-@media (max-width:1000px){#legend{bottom:56px;max-width:calc(100% - 20px)}}
 #legend .sep{width:1px;align-self:stretch;background:var(--vscode-panel-border)}
 .edge{fill:none;stroke:var(--vscode-editorLineNumber-foreground);stroke-width:1.2}
 .edge.hot-in,.edge.hot-out{stroke-width:2.4;stroke-dasharray:7 6;animation:flow .7s linear infinite}
@@ -617,12 +642,13 @@ select.copy{flex-basis:100%;width:100%;min-width:0;box-sizing:border-box}.cbody{
 #float button{display:inline-flex;align-items:center;justify-content:center}
 #float .ic{padding:0 8px;opacity:.8}
 </style></head><body>
+<div id="busy" title="Reloading in the background"></div>
 <div id="bar"><span>Upstream <input id="up" type="number" min="0" max="20" title="Levels upstream of the focused model"></span>
 <span>Downstream <input id="down" type="number" min="0" max="20" title="Levels downstream of the focused model"></span><span id="sel"></span>
 <span class="rgt"><span class="find"><span class="ic" id="findic"></span><input id="find" type="text" placeholder="Find in graph" spellcheck="false"><span id="findn" class="muted"></span></span><button id="sync" class="sec"></button><button id="asetup" class="sec ibtn"></button></span>
 <span class="muted" id="hint">drag = pan / move node · wheel = zoom · click node = center + details · double-click = refocus + open SQL · click Airflow badge = pipelines · type tag: for suggestions</span></div>
 <svg id="graph"></svg><div id="legend"></div><div id="ldlg" class="dialog"></div><div id="dlg" class="dialog"></div><div id="fdlg" class="dialog"></div>
-<div id="float"><span class="ic" data-tip="Search with dbt selectors"></span><input id="q" type="text" placeholder="Search with selectors (e.g. model_name+)" spellcheck="false">
+<div id="float"><span id="qwrap"><input id="q" type="text" placeholder=" " spellcheck="false"><span id="ph"></span></span>
 <button id="apply"></button><button id="clr" style="display:none"></button>
 <button id="fbtn"></button><button id="lbtn"></button>
 <button id="zin"></button><button id="zout"></button><button id="fit"></button></div>
@@ -719,8 +745,16 @@ class Lenses implements vscode.CodeLensProvider {
   }
 }
 
+/** Every setting except the two depths: a change in any of these needs a fresh index. */
+const reloadSignature = () => {
+  const props = Object.keys(ctx.extension.packageJSON?.contributes?.configuration?.properties ?? {}).map((k) => k.replace(/^dbtAirflow\./, ''));
+  return JSON.stringify(props.filter((k) => k !== 'upstreamDepth' && k !== 'downstreamDepth').map((k) => cfg().get(k)));
+};
+let lastSignature = '';
+
 export function activate(c: vscode.ExtensionContext) {
   ctx = c;
+  lastSignature = reloadSignature();
   const reload = reloadAll;
   c.subscriptions.push(
     out,
@@ -735,7 +769,11 @@ export function activate(c: vscode.ExtensionContext) {
     vscode.window.registerTreeDataProvider('dbtAirflow.current', new CurrentTree()),
     vscode.languages.registerCodeLensProvider({ language: 'sql' }, new Lenses()),
     vscode.window.onDidChangeActiveTextEditor(() => { changed.fire(); followActiveEditor(); }),
-    vscode.workspace.onDidChangeConfiguration((e) => e.affectsConfiguration('dbtAirflow') && reload()),
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (!e.affectsConfiguration('dbtAirflow')) return;
+      const sig = reloadSignature();
+      if (sig !== lastSignature) { lastSignature = sig; reload(); } // changing only the depths must not rebuild the index
+    }),
     vscode.workspace.onDidSaveTextDocument((d) => { if (d.fileName.endsWith('.py') && airflowDirs().some((p) => d.fileName.startsWith(p))) reload(); }),
   );
   const w = vscode.workspace.createFileSystemWatcher('**/target/manifest.json');

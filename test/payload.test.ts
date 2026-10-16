@@ -31,6 +31,32 @@ describe('buildPayload', () => {
     expect(names(buildPayload(idx, defaultFilter(), id('b'), 0, 1).nodes.map((n) => n.id))).toEqual(['b', 'c']);
     expect(names(buildPayload(idx, defaultFilter(), id('b'), 5, 0).nodes.map((n) => n.id))).toEqual(['a', 'b', 'src']);
   });
+  it('+ buttons: edge nodes report hidden neighbours, expanding adds one level without changing the depths', () => {
+    const base = buildPayload(idx, defaultFilter(), id('a'), 0, 1); // a -> b shown
+    expect(base.more[id('b')]).toEqual({ up: 0, down: 1 });
+    expect(base.more[id('a')]).toEqual({ up: 1, down: 0 });
+    const ex = buildPayload(idx, defaultFilter(), id('a'), 0, 1, { up: [id('a')], down: [id('b')] });
+    expect(names(ex.nodes.map((n) => n.id))).toEqual(['a', 'b', 'c', 'src']);
+    expect(ex.depthUp).toBe(0); expect(ex.depthDown).toBe(1);
+    expect(ex.more[id('c')]).toEqual({ up: 0, down: 1 });
+    expect(ex.more[id('b')]).toBeUndefined();
+  });
+  it('+ button only where none of that side is shown yet', () => {
+    const p = buildPayload(idx, defaultFilter(), id('b'), 1, 1); // a b c
+    expect(p.more[id('c')]).toEqual({ up: 0, down: 1 });
+    expect(p.more[id('a')]).toEqual({ up: 1, down: 0 });
+    expect(p.more[id('b')]).toBeUndefined();
+  });
+  it('shows the simplest dbt selector for what is on screen', () => {
+    const sel = (up: number, down: number, ex?: any) => buildPayload(idx, defaultFilter(), id('b'), up, down, ex).selector.text;
+    expect(sel(1, 1)).toBe('1+b+1');
+    expect(sel(0, 1)).toBe('b+1');
+    expect(sel(1, 0)).toBe('1+b');
+    expect(sel(0, 0)).toBe('b');
+    expect(sel(5, 5)).toBe('+b+'); // everything is within reach, so the unlimited form is shorter
+    expect(sel(1, 1, { up: [], down: [id('c')] })).toBe('1+b+'); // expanding c reaches d, the end of the chain
+    expect(buildPayload(idx, defaultFilter(), id('a'), 1, 1).selector.text).toBe('+a+1'); // a has a single parent, so + is exact and shorter
+  });
   it('select + exclude + tags + kind within lineage dims via matched list', () => {
     const f = { ...defaultFilter(), select: 'tag:daily', exclude: 'tag:old' };
     expect(names(buildPayload(idx, f, id('b'), 3).matched)).toEqual(['a']);
@@ -45,8 +71,23 @@ describe('buildPayload', () => {
     expect(p.edges).toHaveLength(1);
     expect(p.matched).toBeNull();
   });
-  it('project scope adds upstream/downstream context around a bare model name', () => {
+  it('a bare model name selects only that model, like dbt (context is opt-in)', () => {
+    const only = buildPayload(idx, { ...defaultFilter(), select: 'b', scope: 'project' as const }, id('b'), 2, 2);
+    expect(names(only.nodes.map((n) => n.id))).toEqual(['b']);
+    expect(only.selector.text).toBe('b');
+    expect(only.depthUp).toBe(0); expect(only.depthDown).toBe(0); expect(only.contextOff).toBe(true);
+  });
+  it('a single selected model still gets + buttons, and expanding it extends the selector', () => {
     const f = { ...defaultFilter(), select: 'b', scope: 'project' as const };
+    const p = buildPayload(idx, f, id('b'), 2, 2);
+    expect(p.more[id('b')]).toEqual({ up: 1, down: 1 });
+    const e = buildPayload(idx, f, id('b'), 2, 2, { up: [], down: [id('b')] });
+    expect(names(e.nodes.map((n) => n.id))).toEqual(['b', 'c']);
+    expect(e.selector.text).toBe('b b+1');
+    expect(e.more[id('b')]).toEqual({ up: 1, down: 0 });
+  });
+  it('project scope adds upstream/downstream context around a bare model name when asked', () => {
+    const f = { ...defaultFilter(), select: 'b', scope: 'project' as const, context: true };
     const p = buildPayload(idx, f, id('b'), 1, 1);
     expect(names(p.nodes.map((n) => n.id))).toEqual(['a', 'b', 'c']);
     expect(names(p.matched)).toEqual(['b']);
@@ -67,7 +108,7 @@ describe('buildPayload', () => {
     expect(names(u.nodes.map((n) => n.id))).toEqual(['a', 'b', 'src']);
     expect([u.depthUp, u.depthDown]).toEqual([-1, 0]);
     const plain = f('b');
-    expect([plain.depthUp, plain.depthDown, plain.depthFromSelector]).toEqual([2, 2, false]);
+    expect([plain.depthUp, plain.depthDown, plain.depthFromSelector]).toEqual([0, 0, false]);
     expect(f('tag:daily b+1').depthFromSelector).toBe(false);
   });
   it('bad selector reports an error and does not filter', () => {

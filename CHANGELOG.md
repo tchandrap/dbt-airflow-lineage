@@ -3,7 +3,14 @@
 ## Unreleased
 
 - Renamed the display name to **dbt airflow lineage** (lowercase). The extension ID `tchandrap.dbt-airflow-lineage` is unchanged, so updates keep working. The activity bar, bottom panel and output channel use the same name.
-- New icon: the lineage graph with the dbt and Airflow logos as small badges.
+- New icon: the dbt logo, the Airflow logo and the lineage graph.
+- Refocusing a model now zooms in on it.
+- Switching to another model file resets Upstream and Downstream to 2 and 2.
+- Reloading (manifest or DAG changes, Sync DAGs) happens in the background: a thin progress bar shows it, and the graph stays usable.
+- Explore beyond your levels: the models at the edge of the graph have a **+** button that shows their downstream (right side) or upstream (left side) models. It is for exploring only and does not change the Upstream/Downstream numbers. A + only shows where nothing of that side is on screen yet, and it reveals only that model's neighbours.
+- Typing a model name in the selector now selects only that model, like dbt. "Include upstream / downstream lineage" in the filter dialog is off by default; `1+model+1` style selectors still show their own lineage.
+- The details, Airflow and filter dialogs can be resized: drag their inner edge (width) or, for details and Airflow, the bottom edge (height).
+- The search box always shows the shortest **dbt selector** for the models on screen (`2+model+2`, `+model`, `model+1 other+1` after clicking +). Edit it and press Enter to search.
 
 ## 0.1.1 — 2026-10-13
 

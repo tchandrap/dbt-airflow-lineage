@@ -1,5 +1,6 @@
 import type { LineageIndex } from './index';
 import { parseExpression, resolve, resolveSeeds } from './selector';
+import { simplestSelector } from './simplest';
 import type { GNode, Graph } from './types';
 
 export function neighborhood(g: Graph, id: string, up: number, down: number = up) {
@@ -69,7 +70,7 @@ function addContext(g: Graph, ids: Set<string>, up: number, down: number) {
 }
 
 export interface FilterState { select: string; exclude: string; tags: string[]; tagMode: 'any' | 'all'; kinds: string[]; scope: 'lineage' | 'project'; hide: boolean; context: boolean }
-export const defaultFilter = (): FilterState => ({ select: '', exclude: '', tags: [], tagMode: 'any', kinds: [], scope: 'lineage', hide: false, context: true });
+export const defaultFilter = (): FilterState => ({ select: '', exclude: '', tags: [], tagMode: 'any', kinds: [], scope: 'lineage', hide: false, context: false });
 const MAX_PROJECT_NODES = 400;
 const KINDS = ['table', 'view', 'incremental', 'ephemeral', 'materialized_view'];
 
@@ -95,23 +96,51 @@ export function computeMatched(g: Graph, filter: FilterState): { ids: Set<string
 let allTagsCache: { g: Graph; tags: string[] } | undefined;
 const allTags = (g: Graph) => (allTagsCache?.g === g ? allTagsCache.tags : (allTagsCache = { g, tags: [...new Set(Object.values(g.nodes).flatMap((n) => n.tags))].sort() }).tags);
 
-export function buildPayload(index: LineageIndex, filter: FilterState, id: string, up: number, down: number = up) {
+/** Nodes the user opened with a + button: their direct children (down) / parents (up) are added on top of the chosen depth. */
+export interface Expansion { up: Iterable<string>; down: Iterable<string> }
+
+export function buildPayload(index: LineageIndex, filter: FilterState, id: string, up: number, down: number = up, expand?: Expansion) {
   const g = index.graph;
   const { ids: matchedIds, error } = computeMatched(g, filter);
   const sd = filter.scope === 'project' && filter.select.trim() ? selectorDepth(filter.select) : null;
+  const bare = filter.scope === 'project' && !!matchedIds && !filter.context && !sd; // only the selected models are shown: no lineage around them
   let ids: Set<string>;
   let truncated = 0;
   let seedIds: string[] = [];
   const level = new Map<string, number>();
+  const more: Record<string, { up: number; down: number }> = {};
   if (filter.scope === 'project' && matchedIds) {
     seedIds = filter.select.trim() ? [...resolveSeeds(g, filter.select)].filter((i) => matchedIds.has(i)) : [];
     const all = orderBySeeds(g, matchedIds, seedIds);
     truncated = Math.max(0, all.length - MAX_PROJECT_NODES);
     ids = new Set(all.slice(0, MAX_PROJECT_NODES));
     if (filter.context && !truncated && !sd) addContext(g, ids, up, down); // a selector with + operators already is the lineage
+    if (!truncated) for (const [map, list] of [[g.children, expand?.down ?? []], [g.parents, expand?.up ?? []]] as const) {
+      for (const n of list) if (ids.has(n)) for (const m of map[n] ?? []) if (ids.size < MAX_PROJECT_NODES) ids.add(m);
+    }
+    for (const n of ids) { // + button where none of that side is on screen yet
+      const kids = g.children[n] ?? [], pars = g.parents[n] ?? [];
+      const dn = kids.length && !kids.some((m) => ids.has(m)) ? kids.length : 0, upn = pars.length && !pars.some((m) => ids.has(m)) ? pars.length : 0;
+      if (dn || upn) more[n] = { up: upn, down: dn };
+    }
   } else {
     for (const [k, v] of neighborhood(g, id, up, down)) level.set(k, v);
+    for (const [map, list, sign] of [[g.children, expand?.down ?? [], 1], [g.parents, expand?.up ?? [], -1]] as const) {
+      for (const n of list) {
+        const l = level.get(n);
+        if (l === undefined) continue;
+        for (const m of map[n] ?? []) if (!level.has(m)) level.set(m, l + sign);
+      }
+    }
     ids = new Set(level.keys());
+    // edge nodes with neighbours out of view get a + button (downstream side: children, upstream side: parents),
+    // unless some of that side is already on screen
+    for (const [n, l] of level) {
+      const kids = g.children[n] ?? [], pars = g.parents[n] ?? [];
+      const hiddenDown = l >= 0 && kids.length && !kids.some((m) => ids.has(m)) ? kids.length : 0;
+      const hiddenUp = l <= 0 && pars.length && !pars.some((m) => ids.has(m)) ? pars.length : 0;
+      if (hiddenDown || hiddenUp) more[n] = { up: hiddenUp, down: hiddenDown };
+    }
   }
   const nodes = [...ids].map((n) => ({
     id: n, name: g.nodes[n].name, type: g.nodes[n].type, kind: kindOf(g.nodes[n]), tags: g.nodes[n].tags, path: g.nodes[n].path, sourceName: g.nodes[n].sourceName,
@@ -126,11 +155,13 @@ export function buildPayload(index: LineageIndex, filter: FilterState, id: strin
   const touches = (p: (typeof index.pipelines)[number], id: string) => p.models.has(id) || index.ingestorsFor(id).some((i) => i.pipeline === p);
   const relevant = index.pipelines.filter((p) => nodes.some((n) => touches(p, n.id)));
   return {
-    focus: id, nodes, edges, depthUp: sd ? (Number.isFinite(sd.up) ? sd.up : -1) : up, depthDown: sd ? (Number.isFinite(sd.down) ? sd.down : -1) : down, depthFromSelector: !!sd, filter, filterError: error, truncated,
+    focus: id, nodes, edges, depthUp: sd ? (Number.isFinite(sd.up) ? sd.up : -1) : bare ? 0 : up, depthDown: sd ? (Number.isFinite(sd.down) ? sd.down : -1) : bare ? 0 : down, contextOff: bare, depthFromSelector: !!sd, filter, filterError: error, truncated,
     matched: matchedIds && (filter.scope === 'lineage' || filter.context) ? [...ids].filter((i) => matchedIds.has(i)) : null,
     matchedTotal: matchedIds?.size ?? null,
     seeds: seedIds.filter((i) => ids.has(i)),
     allTags: allTags(g),
+    more,
+    selector: simplestSelector(g, ids, { focus: id, scope: filter.scope === 'project' && matchedIds ? 'project' : 'lineage', up, down, expandUp: [...(expand?.up ?? [])], expandDown: [...(expand?.down ?? [])], select: filter.select, exclude: filter.exclude }),
     pipelines: relevant.map((p) => ({
       id: p.id, name: p.name, file: p.file, schedule: p.schedule, count: p.models.size,
       selected: nodes.filter((n) => touches(p, n.id)).map((n) => n.id),

@@ -13,6 +13,7 @@ interface Filter { select: string; exclude: string; tags: string[]; tagMode: 'an
 interface Payload {
   focus: string; nodes: VNode[]; edges: [string, string][]; pipelines: Pipe[]; depthUp: number; depthDown: number; depthFromSelector: boolean; seeds?: string[]; filter: Filter;
   filterError?: string; truncated: number; matched: string[] | null; matchedTotal: number | null; allTags: string[];
+  more?: Record<string, { up: number; down: number }>; contextOff?: boolean; selector?: { text: string; exact: boolean };
 }
 interface TestView { index: number; label: string; args: string }
 interface PropView { path: string[]; type: 'scalar' | 'list' | 'complex'; value: string; items: string[] }
@@ -73,6 +74,7 @@ const pos = new Map<string, { x: number; y: number; w: number; h: number }>();
 const nodeEls = new Map<string, SVGGElement>();
 let edgeEls: { a: string; b: string; el: SVGPathElement }[] = [];
 let lastBox = { w: 0, h: 0 };
+let pendingExpand: string | null = null; // node whose + button was just clicked: keep the zoom, re-center on it
 
 let flash: { kind: 'ok' | 'err'; text: string } | null = null;
 
@@ -196,7 +198,7 @@ function fit() {
   const r = svg.getBoundingClientRect();
   if (!lastBox.w || !r.width) return;
   // leave room for open dialogs (left: details/filter, right: Airflow) so the fitted graph is never hidden behind them
-  const padL = left ? 410 : 20, padR = airflowFor ? 380 : 20;
+  const padL = left ? ldlg.offsetWidth + 20 : 20, padR = airflowFor ? dlg.offsetWidth + 20 : 20;
   const availW = Math.max(200, r.width - padL - padR), availH = r.height - 70;
   scale = Math.min(availW / lastBox.w, availH / lastBox.h, 1);
   tx = padL + Math.max(0, (availW - lastBox.w * scale) / 2); ty = 20;
@@ -207,7 +209,7 @@ function centerOn(id: string, minScale = 0) {
   const p = pos.get(id);
   const r = svg.getBoundingClientRect();
   if (!p || !r.width) return;
-  const padL = left ? 410 : 0, padR = airflowFor ? 380 : 0;
+  const padL = left ? ldlg.offsetWidth + 20 : 0, padR = airflowFor ? dlg.offsetWidth + 20 : 0;
   if (scale < minScale) scale = minScale; // zoom in when the graph was fitted so small the node is unreadable
   tx = padL + (r.width - padL - padR) / 2 - p.x * scale;
   ty = r.height / 2 - p.y * scale;
@@ -314,6 +316,15 @@ function draw() {
       b.append(el('title', {}, `Loaded by ${ki} ingestion pipeline${ki === 1 ? '' : 's'} (writes this table) — click to view`));
       grp.append(b);
     }
+    const more = data.more?.[n.id];
+    for (const dir of ['up', 'down'] as const) {
+      const cnt = more?.[dir];
+      if (!cnt) continue;
+      const b = el('g', { class: 'xbtn', 'data-expand': dir, 'data-id': n.id, transform: `translate(${dir === 'down' ? p.w : 0},${p.h / 2})` });
+      b.append(el('circle', { r: 10 }), el('path', { d: 'M-4.5,0H4.5M0,-4.5V4.5' }));
+      b.append(el('title', {}, `Show ${cnt} ${dir === 'down' ? 'downstream' : 'upstream'} model${cnt === 1 ? '' : 's'} of ${n.name} (exploring only: your levels stay as set)`));
+      grp.append(b);
+    }
     grp.append(el('title', {}, `${n.name}\n${KIND[n.kind]?.label ?? n.kind}${n.tags.length ? '\ntags: ' + n.tags.join(', ') : ''}`));
     nodeEls.set(n.id, grp);
     root.append(grp);
@@ -341,35 +352,28 @@ function renderBar() {
 
 // ---------------------------------------------------------------- legend
 function renderLegend() {
-  legend.style.display = showLegend && data ? 'flex' : 'none';
+  legend.style.display = showLegend && data ? 'grid' : 'none';
   legend.replaceChildren();
   if (!data || !showLegend) return;
   const counts = new Map<string, number>();
   for (const n of data.nodes) counts.set(n.kind, (counts.get(n.kind) ?? 0) + 1);
-  legend.append(h('b', {}, 'Nodes'));
+  const short = (k: string) => (k.startsWith('model') || ['table', 'view', 'incremental', 'ephemeral', 'materialized_view'].includes(k) ? KIND[k].label.replace(/^Model · /, '') : KIND[k].label);
   for (const k of KIND_ORDER) {
     if (!counts.has(k)) continue;
     const sel = selectedKinds(data.filter);
     const on = sel.has(k);
-    const item = h('span', { className: 'li k' + (on ? '' : ' off'), 'data-tip': on ? 'Click to hide this type' : 'Click to show this type', onclick: () => {
+    legend.append(h('span', { className: 'li k' + (on ? '' : ' off'), 'data-tip': on ? 'Click to hide this type' : 'Click to show this type', onclick: () => {
       const next = new Set(sel);
       next.has(k) ? next.delete(k) : next.add(k);
       post({ type: 'setFilter', filter: { kinds: encodeKinds(next) } });
-    } }, swatch(k), `${KIND[k].label} (${counts.get(k)})`);
-    legend.append(item);
+    } }, swatch(k), short(k)));
   }
-  legend.append(h('span', { className: 'sep' }));
-  const logo = h('span', { className: 'li', title: 'Number of Airflow pipelines that run this node. Click the badge on a node to see them.' }, airflowLogoHtml(14), 'Airflow pipelines (count) — click badge');
-  legend.append(logo);
-  legend.append(h('span', { className: 'li', 'data-tip': 'The pipeline whose DAG code loads data into this BigQuery table (e.g. an ingestion DAG for a source). Click the badge to see it.' }, ico('ingest', 14), 'Ingestion pipeline (count)'));
   const lineSample = (cls: string, label: string) => {
     const s = document.createElementNS(NS, 'svg'); s.setAttribute('width', '28'); s.setAttribute('height', '10');
-    const p = el('path', { d: 'M1,5 L27,5', class: 'edge ' + cls }); s.append(p);
+    s.append(el('path', { d: 'M1,5 L27,5', class: 'edge ' + cls }));
     return h('span', { className: 'li' }, s, label);
   };
-  legend.append(h('span', { className: 'sep' }), lineSample('hot-in', 'feeds selected'), lineSample('hot-out', 'fed by selected'));
-  legend.append(h('span', { className: 'li' }, h('span', { className: 'sw', style: 'outline:2px solid var(--vscode-focusBorder);background:transparent' }), 'current model'),
-    h('span', { className: 'li' }, h('span', { className: 'sw', style: 'background:#888;opacity:.3' }), 'dimmed = outside filter / pipeline'));
+  legend.append(lineSample('hot-in', 'feeds selected'), lineSample('hot-out', 'fed by selected'));
 }
 
 // ---------------------------------------------------------------- Airflow dialog (right)
@@ -926,7 +930,7 @@ function renderFilter() {
   [sel, exc].forEach((i) => i.addEventListener('keydown', (e) => e.key === 'Enter' && apply()));
   const foot = h('div', { className: 'ffoot' });
   foot.append(h('button', { onclick: apply }, ico('refresh', 13), 'Apply'),
-    h('button', { className: 'sec', onclick: () => post({ type: 'setFilter', filter: { select: '', exclude: '', tags: [], kinds: [], scope: 'project', hide: false, context: true } }) }, 'Clear'));
+    h('button', { className: 'sec', onclick: () => post({ type: 'setFilter', filter: { select: '', exclude: '', tags: [], kinds: [], scope: 'project', hide: false, context: false } }) }, 'Clear'));
   if (data.filterError) foot.append(h('span', { className: 'err small' }, data.filterError));
   else if (data.matchedTotal !== null) foot.append(h('span', { className: 'ok small' }, `${data.matchedTotal} match${data.matchedTotal === 1 ? '' : 'es'} in the project`));
   fdlg.append(body, foot);
@@ -941,17 +945,19 @@ function renderLeft(keepFocusInput = false) {
 }
 
 // ---------------------------------------------------------------- interaction
-let drag: { kind: 'pan' | 'node'; id?: string; sx: number; sy: number; ox: number; oy: number; moved: boolean; badge?: string; ing?: boolean; node?: string } | null = null;
+let drag: { kind: 'pan' | 'node'; id?: string; sx: number; sy: number; ox: number; oy: number; moved: boolean; badge?: string; ing?: boolean; node?: string; expand?: { id: string; dir: string } } | null = null;
 
 svg.addEventListener('pointerdown', (e) => {
   const t = e.target as Element;
   const ingBadge = t.closest('[data-ibadge]')?.getAttribute('data-ibadge') ?? undefined;
   const badge = t.closest('[data-badge]')?.getAttribute('data-badge') ?? ingBadge;
+  const xb = t.closest('[data-expand]');
+  const expand = xb ? { id: xb.getAttribute('data-id')!, dir: xb.getAttribute('data-expand')! } : undefined;
   const nodeId = t.closest('.node')?.getAttribute('data-id') ?? undefined;
   const p = nodeId ? pos.get(nodeId) : undefined;
-  drag = nodeId && p && !badge
+  drag = nodeId && p && !badge && !expand
     ? { kind: 'node', id: nodeId, sx: e.clientX, sy: e.clientY, ox: p.x, oy: p.y, moved: false, node: nodeId }
-    : { kind: 'pan', sx: e.clientX, sy: e.clientY, ox: tx, oy: ty, moved: false, badge, ing: !!ingBadge, node: nodeId };
+    : { kind: 'pan', sx: e.clientX, sy: e.clientY, ox: tx, oy: ty, moved: false, badge, ing: !!ingBadge, node: nodeId, expand };
   svg.setPointerCapture(e.pointerId);
   svg.classList.add('grabbing');
 });
@@ -971,6 +977,7 @@ const end = (e: PointerEvent) => {
   svg.classList.remove('grabbing');
   try { svg.releasePointerCapture(e.pointerId); } catch { /* not captured */ }
   if (!d || d.moved) return;
+  if (d.expand) { pendingExpand = d.expand.id; post({ type: 'expand', ...d.expand }); return; }
   if (d.badge) {
     const focus = d.ing ? 'ingest' : 'run';
     airflowFor = airflowFor === d.badge && airflowFocus === focus ? null : d.badge;
@@ -1064,7 +1071,7 @@ setIcon('zin', 'plus', 'Zoom in');
 setIcon('zout', 'minus', 'Zoom out');
 setIcon('fit', 'expand', 'Fit to view');
 document.getElementById('findic')?.replaceChildren(ico('search', 14));
-document.querySelector('#float .ic')?.replaceChildren(ico('search', 15));
+document.getElementById('ph')?.replaceChildren(ico('search', 15), 'Search with selectors');
 document.getElementById('fit')!.addEventListener('click', () => { fit(); applyView(); });
 document.getElementById('zin')!.addEventListener('click', () => zoomBy(1.25));
 document.getElementById('zout')!.addEventListener('click', () => zoomBy(0.8));
@@ -1073,7 +1080,10 @@ document.getElementById('lbtn')!.addEventListener('click', () => { showLegend = 
 
 const up = document.getElementById('up') as HTMLInputElement;
 const down = document.getElementById('down') as HTMLInputElement;
-const sendDepth = () => post({ type: 'depth', up: up.value, down: down.value });
+const sendDepth = () => {
+  if (data?.contextOff) post({ type: 'setFilter', filter: { ...data.filter, context: true } }); // typing a depth asks for lineage around the selection
+  post({ type: 'depth', up: up.value, down: down.value });
+};
 up.addEventListener('change', sendDepth);
 down.addEventListener('change', sendDepth);
 
@@ -1105,6 +1115,7 @@ window.addEventListener('message', (ev) => {
     return;
   }
   if (m?.type === 'sync') { showSync(m); return; }
+  if (m?.type === 'busy') { document.getElementById('busy')!.classList.toggle('on', !!m.on); return; }
   if (m?.type !== 'graph') return;
   const prev = data?.focus;
   const prevLayoutKey = data ? data.nodes.map((n) => n.id).join('|') : '';
@@ -1119,11 +1130,12 @@ window.addEventListener('message', (ev) => {
     if (modelFor !== data.focus) modelFor = null;
   }
   const relayout = prevLayoutKey !== data.nodes.map((n) => n.id).join('|') || prev !== data.focus;
-  if (relayout) { layout(); fit(); }
+  if (relayout) { layout(); if (!pendingExpand) fit(); }
   if (findQ) runFind(true); else draw();
   renderAirflow();
   if (refocused && left === 'model') openModel(data.focus); // an open details dialog follows the focused model
-  if (refocused) centerOn(data.focus);
+  if (refocused) centerOn(data.focus, 1); // zoom in on the newly focused model
+  else if (pendingExpand) { if (pos.has(pendingExpand)) centerOn(pendingExpand); pendingExpand = null; }
   // a new search: select + center the model(s) you searched for (they may sit far from the middle of a big graph)
   const fkey = `${data.filter.select}|${data.filter.exclude}`;
   const searched = fkey !== lastFilterKey && !!data.seeds?.length && !refocused;
@@ -1137,12 +1149,50 @@ window.addEventListener('message', (ev) => {
     inp.value = v < 0 ? '' : String(v);
     inp.placeholder = '∞';
     inp.disabled = data.depthFromSelector;
-    inp.setAttribute('data-tip', data.depthFromSelector ? 'Set by the + operators in your selector' : 'Levels shown around the focused model');
+    inp.setAttribute('data-tip', data.depthFromSelector ? 'Set by the + operators in your selector' : data.contextOff ? 'Only the selected models are shown. Change this number to add lineage around them.' : 'Levels shown around the focused model');
     inp.removeAttribute('title');
   }
-  if (document.activeElement !== q) { q.value = data.filter.select; clr.style.display = q.value ? '' : 'none'; }
+  if (document.activeElement !== q) { // the search box always shows the shortest dbt selector for what is on screen
+    q.value = data.selector?.exact ? data.selector.text : data.filter.select;
+    clr.style.display = data.filter.select || data.filter.exclude ? '' : 'none';
+  }
   q.style.color = data.filterError ? 'var(--vscode-errorForeground)' : '';
-  q.title = data.filterError ?? '';
+  q.title = data.filterError ?? 'The dbt selector for the graph shown. Edit it and press Enter to search.';
 });
+
+// ---------------------------------------------------------------- resizable dialogs
+/** Drag handles on the inner edge (width) and, for the tall dialogs, the bottom edge (height) of a dialog. */
+function makeResizable(d: HTMLElement, side: 'left' | 'right', height: boolean) {
+  const mk = (cls: string) => { const e = document.createElement('div'); e.className = `rz ${cls}`; d.parentElement!.append(e); return e; };
+  const hw = mk('rzw'), hh = height ? mk('rzh') : null;
+  const place = () => {
+    const show = d.classList.contains('show');
+    hw.style.display = show ? 'block' : 'none';
+    if (hh) hh.style.display = show ? 'block' : 'none';
+    if (!show) return;
+    hw.style.left = `${(side === 'left' ? d.offsetLeft + d.offsetWidth : d.offsetLeft) - 4}px`;
+    hw.style.top = `${d.offsetTop}px`; hw.style.height = `${d.offsetHeight}px`;
+    if (hh) { hh.style.left = `${d.offsetLeft}px`; hh.style.top = `${d.offsetTop + d.offsetHeight - 4}px`; hh.style.width = `${d.offsetWidth}px`; }
+  };
+  const drag = (h: HTMLElement, axis: 'w' | 'h') => h.addEventListener('pointerdown', (e) => {
+    e.preventDefault(); e.stopPropagation();
+    h.setPointerCapture(e.pointerId);
+    const x0 = e.clientX, y0 = e.clientY, w0 = d.offsetWidth, h0 = d.offsetHeight;
+    const move = (m: PointerEvent) => {
+      if (axis === 'w') d.style.width = `${Math.max(260, Math.min(svg.clientWidth - 120, w0 + (side === 'left' ? m.clientX - x0 : x0 - m.clientX)))}px`;
+      else { d.style.bottom = 'auto'; d.style.height = `${Math.max(160, Math.min(svg.clientHeight + 40, h0 + m.clientY - y0))}px`; }
+      place();
+    };
+    const up = () => { h.removeEventListener('pointermove', move); h.removeEventListener('pointerup', up); h.removeEventListener('pointercancel', up); };
+    h.addEventListener('pointermove', move); h.addEventListener('pointerup', up); h.addEventListener('pointercancel', up);
+  });
+  drag(hw, 'w'); if (hh) drag(hh, 'h');
+  new ResizeObserver(place).observe(d);
+  new MutationObserver(place).observe(d, { attributes: true, attributeFilter: ['class'] });
+  window.addEventListener('resize', place);
+}
+makeResizable(ldlg, 'left', true);
+makeResizable(dlg, 'right', true);
+makeResizable(fdlg, 'right', false);
 
 post({ type: 'ready' });
