@@ -68,3 +68,12 @@ export function buildExcludeRegex(patterns: string[]): string {
   }
   return clean.map((p) => `(?:${p})`).join('|');
 }
+
+/** The Google sign-in link `gcloud auth login` prints (it also prints it when it opened a browser itself). */
+export const findAuthUrl = (text: string): string | undefined => /https:\/\/accounts\.google\.com\/[^\s"'<>]+/.exec(text)?.[0];
+
+/**
+ * Environment for `gcloud auth login` run by the extension: `BROWSER=true` makes gcloud skip launching a browser (it just
+ * prints the link), so the extension can open the link itself with the editor's own opener. Windows keeps gcloud's default.
+ */
+export const authLoginEnv = (env: NodeJS.ProcessEnv, platform: string = process.platform): NodeJS.ProcessEnv => (platform === 'win32' ? env : { ...env, BROWSER: 'true' });

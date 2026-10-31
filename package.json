@@ -40,7 +40,7 @@
     "Other"
   ],
   "engines": {
-    "vscode": "^1.85.0"
+    "vscode": "^1.95.0"
   },
   "activationEvents": [
     "workspaceContains:**/dbt_project.yml"
@@ -73,6 +73,26 @@
         "command": "dbtAirflow.syncDags",
         "title": "dbt Airflow: Sync Airflow DAGs from GCS",
         "icon": "$(cloud-download)"
+      },
+      {
+        "command": "dbtAirflow.askAi",
+        "title": "dbt Airflow: Ask AI about this model (impacted reports)"
+      },
+      {
+        "command": "dbtAirflow.connectAi",
+        "title": "dbt Airflow: Connect an AI tool to the lineage (Claude, Codex, other)…"
+      },
+      {
+        "command": "dbtAirflow.setupReports",
+        "title": "dbt Airflow: Choose what counts as a report…"
+      },
+      {
+        "command": "dbtAirflow.setupCritical",
+        "title": "dbt Airflow: Choose which models are critical…"
+      },
+      {
+        "command": "dbtAirflow.exportImage",
+        "title": "dbt Airflow: Save the lineage as an image (SVG or PNG)…"
       }
     ],
     "viewsContainers": {
@@ -130,12 +150,14 @@
         "dbtAirflow.projectDir": {
           "type": "string",
           "default": "",
-          "description": "dbt project dir (contains dbt_project.yml). Empty = auto-detect in the workspace."
+          "markdownDescription": "Folder of the dbt project (the one that contains `dbt_project.yml`). Leave empty to find it automatically in the workspace. Use it when the workspace holds several dbt projects.\n\nExample: `my_dbt_project` or an absolute path.",
+          "order": 10
         },
         "dbtAirflow.manifestPath": {
           "type": "string",
           "default": "target/manifest.json",
-          "description": "Manifest path, relative to the dbt project dir."
+          "markdownDescription": "Where `manifest.json` is, relative to the dbt project folder. The extension reads it to draw the lineage. Create or refresh it with `dbt parse`.\n\nDefault: `target/manifest.json`.",
+          "order": 11
         },
         "dbtAirflow.airflowPaths": {
           "type": "array",
@@ -143,27 +165,32 @@
             "type": "string"
           },
           "default": [],
-          "description": "Absolute or workspace-relative directories holding Airflow DAG code (scanned recursively for .py)."
+          "markdownDescription": "Folders that hold Airflow DAG code, scanned for `.py` files. Absolute, or relative to the workspace. Used when `airflowSource` is `local`.\n\nExample: `[\"../airflow/dags\", \"/Users/me/airflow/dags\"]`.",
+          "order": 31
         },
         "dbtAirflow.dagsBucket": {
           "type": "string",
           "default": "",
-          "description": "GCS folder that holds the Airflow DAGs when airflowSource is gcs, e.g. gs://my-bucket/dags. Uses gcloud with your own credentials."
+          "markdownDescription": "Google Cloud Storage folder with the Airflow DAGs, used when `airflowSource` is `gcs`. The extension signs in with your own `gcloud` account and only reads.\n\nExample: `gs://my-airflow-bucket/dags`.",
+          "order": 32
         },
         "dbtAirflow.dbtCommand": {
           "type": "string",
           "default": "dbt",
-          "description": "Command used by 'Run dbt parse'."
+          "markdownDescription": "The command used by **dbt Airflow: Run dbt parse** (for example `dbt`, `uv run dbt` or `poetry run dbt`).",
+          "order": 12
         },
         "dbtAirflow.upstreamDepth": {
           "type": "number",
           "default": 2,
-          "description": "How many levels upstream of the focused model are shown."
+          "markdownDescription": "How many levels **upstream** (parents) of the focused model the graph shows. Resets to 2 when you switch to another model file. Use the **+** buttons in the graph to explore further without changing this number.",
+          "order": 20
         },
         "dbtAirflow.downstreamDepth": {
           "type": "number",
           "default": 2,
-          "description": "How many levels downstream of the focused model are shown."
+          "markdownDescription": "How many levels **downstream** (children) of the focused model the graph shows. Resets to 2 when you switch to another model file.",
+          "order": 21
         },
         "dbtAirflow.airflowSource": {
           "type": "string",
@@ -180,12 +207,14 @@
             "Mirror DAGs from a Google Cloud Storage bucket (dagsBucket)."
           ],
           "default": "auto",
-          "description": "Where Airflow pipelines come from. Use \"dbt Airflow: Set up Airflow pipelines…\" for a guided setup."
+          "markdownDescription": "Where the Airflow pipelines come from. The **Sync DAGs** button in the lineage view asks the first time you click it, and you can change it later with the command **dbt Airflow: Set up Airflow**.\n\n- `auto`: use `local` when `airflowPaths` is set, otherwise no pipelines\n- `none`: do not show Airflow pipelines\n- `local`: read DAG code from the folders in `airflowPaths`\n- `gcs`: copy DAGs from the bucket in `dagsBucket` (needs `gcloud`)",
+          "order": 30
         },
         "dbtAirflow.dagsDownloadDir": {
           "type": "string",
           "default": "",
-          "description": "Optional folder for the downloaded GCS DAGs. A sub-folder \"airflow-dags-cache\" is created there and is the only thing ever modified. Empty = extension storage."
+          "markdownDescription": "Optional folder for the downloaded DAGs. The extension creates a sub-folder `airflow-dags-cache` there and only ever changes that sub-folder. Leave empty to use the extension's own storage.",
+          "order": 33
         },
         "dbtAirflow.dagsSyncExclude": {
           "type": "array",
@@ -196,7 +225,50 @@
             "^(?!.*\\.py$).*",
             "^(.*/)?(tests?|__pycache__)/.*"
           ],
-          "description": "Python regexes (matched against paths relative to the bucket folder) for objects NOT to download when syncing DAGs from GCS. The default copies only .py files and skips test and cache folders, which avoids downloading test data. Patterns cannot contain commas."
+          "markdownDescription": "Regular expressions (Python syntax, matched against the path inside the bucket folder) for files that are **not** downloaded. The default copies only `.py` files and skips `tests` and `__pycache__` folders, so test data in a bucket is never downloaded. Patterns cannot contain commas.",
+          "order": 34
+        },
+        "dbtAirflow.ai.enabled": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Optional AI. Lets your editor's AI agent (the VS Code agent or the Cursor agent) ask this extension about your lineage, for example which reports a model change impacts, which pipelines run it, or what a selector picks. Off by default: when off, nothing is registered and nothing is sent anywhere.\n\nThe **Ask AI** button asks for confirmation and turns this on for you. In Cursor it sets up a local MCP server (a small program on your machine, read-only, no network). The AI only receives model, report and pipeline names, never SQL or data.",
+          "order": 50
+        },
+        "dbtAirflow.reports.include": {
+          "markdownDescription": "What counts as a **report** for the **Impact** button and the AI questions. A list of sources that are **combined**; add as many as you need. Click **Impact** in the lineage view to build the list with a picker, or edit it here.\n\nEach entry is one of:\n\n- `exposures`: every dbt exposure (`exposure:weekly_*` for some by name)\n- `tag:report`: models with that tag\n- `folder:reporting`: models under a folder, by name or path (`folder:models/reporting`)\n- `file:rpt_pnl.sql`: one file or model (`file:models/marts/rpt_pnl.sql`)\n- `path:models/marts`: a dbt path selector\n- any dbt selector, for example `tag:finance,config.materialized:view` or `rpt_*`\n\nExample combining several places:\n\n```json\n\"dbtAirflow.reports.include\": [\n  \"exposures\",\n  \"tag:report\",\n  \"folder:one_reporting_views\",\n  \"file:rpt_pnl.sql\"\n]\n```\n\nSources (tables) are never reports.",
+          "order": 40,
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "dbtAirflow.reports.exclude": {
+          "markdownDescription": "Entries taken **out** of the reports again, written like `reports.include`. For example `[\"tag:draft\", \"folder:sandbox\"]`.",
+          "order": 41,
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "dbtAirflow.critical.include": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "order": 42,
+          "markdownDescription": "Which models are **critical**, for the **Impact** button and the AI questions. The Impact panel lists the critical models a change reaches next to the reports. Same entries as `reports.include`, combined:\n\n- `tag:critical`: models with that tag\n- `folder:regulatory_reports`: models under a folder\n- `file:fct_loan.sql`: one file or model\n- `path:models/core`, or any dbt selector such as `tag:pii,config.materialized:table`\n\nExample:\n\n```json\n\"dbtAirflow.critical.include\": [\"tag:critical\", \"folder:regulatory_reports\", \"file:fct_loan.sql\"]\n```\n\nSources (tables) are never critical models. Choose them with the picker: **dbt Airflow: Choose which models are critical…**"
+        },
+        "dbtAirflow.critical.exclude": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "order": 43,
+          "markdownDescription": "Entries taken **out** of the critical models again, written like `critical.include`."
         }
       }
     },
@@ -205,6 +277,171 @@
         "view": "dbtAirflow.pipelines",
         "contents": "Airflow pipelines are optional. Connect a local DAGs folder or a Google Cloud Storage bucket to see which pipelines run each model.\n[Set up Airflow pipelines](command:dbtAirflow.setupAirflow)",
         "when": "config.dbtAirflow.airflowSource != 'gcs' && config.dbtAirflow.airflowSource != 'local'"
+      }
+    ],
+    "languageModelTools": [
+      {
+        "name": "dbtairflow_find_models",
+        "toolReferenceName": "dbtLineageFindModels",
+        "displayName": "dbt lineage: find models",
+        "modelDescription": "Find dbt models, sources, seeds or snapshots by part of a name, path, or tag:<name>. Use it first when you only have an approximate name.",
+        "userDescription": "Find dbt models, sources, seeds or snapshots by part of a name, path, or tag:<name>.",
+        "canBeReferencedInPrompt": true,
+        "icon": "$(type-hierarchy)",
+        "when": "config.dbtAirflow.ai.enabled",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "Part of a name or path, or tag:<name>"
+            },
+            "limit": {
+              "type": "integer",
+              "description": "Maximum results (default 20)"
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      },
+      {
+        "name": "dbtairflow_lineage",
+        "toolReferenceName": "dbtLineageLineage",
+        "displayName": "dbt lineage: lineage",
+        "modelDescription": "Upstream and downstream lineage of one model, limited to a number of levels.",
+        "userDescription": "Upstream and downstream lineage of one model, limited to a number of levels.",
+        "canBeReferencedInPrompt": true,
+        "icon": "$(type-hierarchy)",
+        "when": "config.dbtAirflow.ai.enabled",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "model": {
+              "type": "string",
+              "description": "Model name or node id"
+            },
+            "up": {
+              "type": "integer",
+              "description": "Levels upstream (default 2)"
+            },
+            "down": {
+              "type": "integer",
+              "description": "Levels downstream (default 2)"
+            }
+          },
+          "required": [
+            "model"
+          ]
+        }
+      },
+      {
+        "name": "dbtairflow_impacted_reports",
+        "toolReferenceName": "dbtLineageImpactedReports",
+        "displayName": "dbt lineage: impacted reports",
+        "modelDescription": "What is affected if this model changes: the reports and the critical models downstream of it, with the shortest path and the Airflow pipelines (and schedules) that run each. What counts as a report or a critical model depends on the project settings.",
+        "userDescription": "What is affected if this model changes: the reports and the critical models downstream of it, with the shortest path and the Airflow pipelines (and schedules) that run each.",
+        "canBeReferencedInPrompt": true,
+        "icon": "$(type-hierarchy)",
+        "when": "config.dbtAirflow.ai.enabled",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "model": {
+              "type": "string",
+              "description": "Model name or node id"
+            }
+          },
+          "required": [
+            "model"
+          ]
+        }
+      },
+      {
+        "name": "dbtairflow_pipelines_for",
+        "toolReferenceName": "dbtLineagePipelinesFor",
+        "displayName": "dbt lineage: pipelines for",
+        "modelDescription": "Which Airflow pipelines run this model (via their dbt selectors) or load its table.",
+        "userDescription": "Which Airflow pipelines run this model (via their dbt selectors) or load its table.",
+        "canBeReferencedInPrompt": true,
+        "icon": "$(type-hierarchy)",
+        "when": "config.dbtAirflow.ai.enabled",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "model": {
+              "type": "string",
+              "description": "Model name or node id"
+            }
+          },
+          "required": [
+            "model"
+          ]
+        }
+      },
+      {
+        "name": "dbtairflow_models_for_pipeline",
+        "toolReferenceName": "dbtLineageModelsForPipeline",
+        "displayName": "dbt lineage: models for pipeline",
+        "modelDescription": "Which dbt models an Airflow pipeline (DAG) selects.",
+        "userDescription": "Which dbt models an Airflow pipeline (DAG) selects.",
+        "canBeReferencedInPrompt": true,
+        "icon": "$(type-hierarchy)",
+        "when": "config.dbtAirflow.ai.enabled",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "pipeline": {
+              "type": "string",
+              "description": "Pipeline (DAG) name or id"
+            },
+            "limit": {
+              "type": "integer",
+              "description": "Maximum models (default 30)"
+            }
+          },
+          "required": [
+            "pipeline"
+          ]
+        }
+      },
+      {
+        "name": "dbtairflow_resolve_selector",
+        "toolReferenceName": "dbtLineageResolveSelector",
+        "displayName": "dbt lineage: resolve selector",
+        "modelDescription": "The models a dbt selector picks (like `dbt ls --select X --exclude Y`): names, tag:, path:, source:, + and N+ operators, unions and intersections.",
+        "userDescription": "The models a dbt selector picks (like `dbt ls --select X --exclude Y`): names, tag:, path:, source:, + and N+ operators, unions and intersections.",
+        "canBeReferencedInPrompt": true,
+        "icon": "$(type-hierarchy)",
+        "when": "config.dbtAirflow.ai.enabled",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "select": {
+              "type": "string",
+              "description": "dbt --select expression"
+            },
+            "exclude": {
+              "type": "string",
+              "description": "dbt --exclude expression (optional)"
+            },
+            "limit": {
+              "type": "integer",
+              "description": "Maximum models listed (default 30)"
+            }
+          },
+          "required": [
+            "select"
+          ]
+        }
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "dbtAirflow.askAi",
+        "key": "ctrl+alt+a",
+        "mac": "cmd+alt+a"
       }
     ]
   },

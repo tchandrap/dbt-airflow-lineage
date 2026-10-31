@@ -57,6 +57,20 @@ describe('buildPayload', () => {
     expect(sel(1, 1, { up: [], down: [id('c')] })).toBe('1+b+'); // expanding c reaches d, the end of the chain
     expect(buildPayload(idx, defaultFilter(), id('a'), 1, 1).selector.text).toBe('+a+1'); // a has a single parent, so + is exact and shorter
   });
+  it('Impact view: only the paths from the focused model to the reports it affects', () => {
+    const tagged = { ...g, nodes: { ...g.nodes, [id('c')]: { ...g.nodes[id('c')], tags: ['report'] } } } as Graph;
+    const ix = new LineageIndex(tagged, []);
+    const p: any = buildPayload(ix, defaultFilter(), id('a'), 1, 1, undefined, { include: ['tag:report'], exclude: [] });
+    expect(names(p.nodes.map((n: any) => n.id))).toEqual(['a', 'b', 'c']); // depth is ignored: c is two hops away
+    expect(p.impact.reports.map((r: any) => [r.name, r.hops])).toEqual([['c', 2]]);
+    expect(p.impact.pathEdges).toEqual([[id('a'), id('b')], [id('b'), id('c')]]);
+    expect(p.impact.definition).toBe('reports: tag:report');
+    expect(p.impact.entries).toEqual([{ entry: 'tag:report', count: 1, error: undefined }]);
+    const none: any = buildPayload(ix, defaultFilter(), id('a'), 1, 1, undefined, { include: [], exclude: [] });
+    expect(none.impact.configured).toBe(false);
+    expect(names(none.nodes.map((n: any) => n.id))).toEqual(['a']);
+    expect((buildPayload(ix, defaultFilter(), id('a'), 1, 1) as any).impact).toBeUndefined();
+  });
   it('select + exclude + tags + kind within lineage dims via matched list', () => {
     const f = { ...defaultFilter(), select: 'tag:daily', exclude: 'tag:old' };
     expect(names(buildPayload(idx, f, id('b'), 3).matched)).toEqual(['a']);

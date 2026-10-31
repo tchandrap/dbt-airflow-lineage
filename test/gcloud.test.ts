@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildExcludeRegex, classifyGcloudError, DEFAULT_SYNC_EXCLUDE, isValidGcsPath, normalizeGcs, parentGcs, parseLs, shortError } from '../src/gcloud';
+import { authLoginEnv, buildExcludeRegex, findAuthUrl, classifyGcloudError, DEFAULT_SYNC_EXCLUDE, isValidGcsPath, normalizeGcs, parentGcs, parseLs, shortError } from '../src/gcloud';
 
 describe('classifyGcloudError', () => {
   it('recognises the expired-login error from the screenshot', () => {
@@ -60,5 +60,19 @@ describe('sync exclusions', () => {
     expect(() => buildExcludeRegex(['(unclosed'])).toThrow(/not a valid regular expression/);
     expect(buildExcludeRegex(['  ', ''])).toBe('');
     expect(buildExcludeRegex(['a', 'b'])).toBe('(?:a)|(?:b)');
+  });
+});
+
+describe('gcloud sign-in helpers', () => {
+  it('finds the sign-in link in gcloud output', () => {
+    const out = 'Your browser has been opened to visit:\n\n    https://accounts.google.com/o/oauth2/auth?response_type=code&client_id=x&state=y\n';
+    expect(findAuthUrl(out)).toBe('https://accounts.google.com/o/oauth2/auth?response_type=code&client_id=x&state=y');
+    expect(findAuthUrl('Go to https://example.com/')).toBeUndefined();
+    expect(findAuthUrl('')).toBeUndefined();
+  });
+  it('stops gcloud from launching its own browser, except on Windows', () => {
+    expect(authLoginEnv({ A: '1' }, 'darwin')).toEqual({ A: '1', BROWSER: 'true' });
+    expect(authLoginEnv({ A: '1' }, 'linux').BROWSER).toBe('true');
+    expect(authLoginEnv({ A: '1', BROWSER: 'x' }, 'win32')).toEqual({ A: '1', BROWSER: 'x' });
   });
 });
