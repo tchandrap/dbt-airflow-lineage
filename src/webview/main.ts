@@ -11,9 +11,14 @@ interface VNode { id: string; name: string; type: string; kind: string; tags: st
 interface Pipe { id: string; name: string; file?: string; schedule?: string; selected: string[] }
 interface Filter { select: string; exclude: string; tags: string[]; tagMode: 'any' | 'all'; kinds: string[]; scope: 'lineage' | 'project'; hide: boolean; context: boolean }
 interface Payload {
-  focus: string; nodes: VNode[]; edges: [string, string][]; pipelines: Pipe[]; depthUp: number; depthDown: number; depthFromSelector: boolean; seeds?: string[]; filter: Filter;
+  focus: string; nodes: VNode[]; edges: [string, string][]; pipelines: Pipe[]; depthUp: number; depthDown: number; depthFromSelector: boolean; ai?: boolean; impact?: ImpactInfo; seeds?: string[]; filter: Filter;
   filterError?: string; truncated: number; matched: string[] | null; matchedTotal: number | null; allTags: string[];
   more?: Record<string, { up: number; down: number }>; contextOff?: boolean; selector?: { text: string; exact: boolean };
+}
+interface Entry { entry: string; count: number; error?: string }
+interface ImpactInfo {
+  configured: boolean; definition: string; entries: Entry[]; excluded: Entry[]; criticalEntries: Entry[]; criticalExcluded: Entry[]; error?: string; downstream: number; reportTotal: number; criticalTotal: number; total: number;
+  reports: { id: string; name: string; kinds: ('report' | 'critical')[]; hops: number; path: string[]; pipelines: string[] }[]; pathEdges: [string, string][];
 }
 interface TestView { index: number; label: string; args: string }
 interface PropView { path: string[]; type: 'scalar' | 'list' | 'complex'; value: string; items: string[] }
@@ -70,6 +75,9 @@ let findIds: string[] = [];
 let findIdx = -1;
 let lastFilterKey: string | undefined;
 let tx = 20, ty = 20, scale = 1;
+let zTop = 20;
+const toFront = (e: HTMLElement) => { e.style.zIndex = String(++zTop); }; // the dialog opened last sits in front of the others
+let dlgKey = '', ldlgKey = '';
 const pos = new Map<string, { x: number; y: number; w: number; h: number }>();
 const nodeEls = new Map<string, SVGGElement>();
 let edgeEls: { a: string; b: string; el: SVGPathElement }[] = [];
@@ -82,6 +90,7 @@ const svg = document.getElementById('graph') as unknown as SVGSVGElement;
 const dlg = document.getElementById('dlg')!;
 const ldlg = document.getElementById('ldlg')!;
 const fdlg = document.getElementById('fdlg')!;
+const idlg = document.getElementById('idlg')!;
 const legend = document.getElementById('legend')!;
 const selBar = document.getElementById('sel')!;
 
@@ -128,10 +137,14 @@ const ICONS: Record<string, string> = {
   plus: '<path d="M8 3v10M3 8h10"/>',
   minus: '<path d="M3 8h10"/>',
   search: '<circle cx="7" cy="7" r="4.2"/><path d="M10.2 10.2L14 14"/>',
+  chat: '<path d="M2.5 3h11v7.5H8.2L5 13v-2.5H2.5z"/><path d="M5.5 6h5M5.5 8h3"/>',
+  copy: '<rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5V3.5a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2"/>',
+  download: '<path d="M8 2v8M4.8 7.2L8 10.4l3.2-3.2M2.5 13h11"/>',
+  impact: '<circle cx="8" cy="8" r="5.5"/><circle cx="8" cy="8" r="2"/>',
   info: '<circle cx="8" cy="8" r="6"/><path d="M8 7.2V11M8 5v.1"/>',
   chevron: '<path d="M6 3.5L10.5 8 6 12.5"/>',
   tag: '<path d="M2 8.2V2.5h5.7l6.3 6.3-5.2 5.2z"/><circle cx="5.3" cy="5.3" r=".6"/>',
-  gear: '<circle cx="8" cy="8" r="2.2"/><path d="M8 1.8v1.7M8 12.5v1.7M1.8 8h1.7M12.5 8h1.7M3.6 3.6l1.2 1.2M11.2 11.2l1.2 1.2M12.4 3.6l-1.2 1.2M4.8 11.2l-1.2 1.2"/>',
+  gear: '<path d="M6.6 1.6h2.8l.4 1.6c.5.2.9.4 1.3.7l1.6-.5 1.4 2.4-1.2 1.1c.1.5.1.9 0 1.4l1.2 1.1-1.4 2.4-1.6-.5c-.4.3-.8.5-1.3.7l-.4 1.6H6.6l-.4-1.6c-.5-.2-.9-.4-1.3-.7l-1.6.5L2 10.2l1.2-1.1c-.1-.5-.1-.9 0-1.4L2 6.6l1.4-2.4 1.6.5c.4-.3.8-.5 1.3-.7z"/><circle cx="8" cy="8" r="2.2"/>',
   expand: '<path d="M9.5 2.5h4v4M6.5 13.5h-4v-4M13.5 2.5L9 7M2.5 13.5L7 9"/>',
   file: '<path d="M4 1.5h5l3.5 3.5v9.5H4z"/><path d="M9 1.5V5h3.5"/>',
   yaml: '<path d="M3 3h10M3 6.5h6M3 10h10M3 13.5h6"/>',
@@ -198,7 +211,7 @@ function fit() {
   const r = svg.getBoundingClientRect();
   if (!lastBox.w || !r.width) return;
   // leave room for open dialogs (left: details/filter, right: Airflow) so the fitted graph is never hidden behind them
-  const padL = left ? ldlg.offsetWidth + 20 : 20, padR = airflowFor ? dlg.offsetWidth + 20 : 20;
+  const padL = left ? ldlg.offsetWidth + 20 : 20, padR = airflowFor ? dlg.offsetWidth + 20 : idlg.classList.contains('show') ? idlg.offsetWidth + 20 : 20;
   const availW = Math.max(200, r.width - padL - padR), availH = r.height - 70;
   scale = Math.min(availW / lastBox.w, availH / lastBox.h, 1);
   tx = padL + Math.max(0, (availW - lastBox.w * scale) / 2); ty = 20;
@@ -209,7 +222,7 @@ function centerOn(id: string, minScale = 0) {
   const p = pos.get(id);
   const r = svg.getBoundingClientRect();
   if (!p || !r.width) return;
-  const padL = left ? ldlg.offsetWidth + 20 : 0, padR = airflowFor ? dlg.offsetWidth + 20 : 0;
+  const padL = left ? ldlg.offsetWidth + 20 : 0, padR = airflowFor ? dlg.offsetWidth + 20 : idlg.classList.contains('show') ? idlg.offsetWidth + 20 : 0;
   if (scale < minScale) scale = minScale; // zoom in when the graph was fitted so small the node is unreadable
   tx = padL + (r.width - padL - padR) / 2 - p.x * scale;
   ty = r.height / 2 - p.y * scale;
@@ -262,9 +275,15 @@ function draw() {
   const findSet = findQ ? new Set(findIds) : null;
   const dimmed = (id: string) => (pHl && !pHl.has(id)) || (fHl && !fHl.has(id) && id !== data!.focus) || (findSet && !findSet.has(id));
 
-  for (const [a, b] of data.edges) {
+  const imp = data.impact;
+  const impEdges = new Set((imp?.pathEdges ?? []).map(([x, y]) => `${x}>${y}`));
+  const rptIds = new Set((imp?.reports ?? []).filter((r) => r.kinds.includes('report')).map((r) => r.id));
+  const critIds = new Set((imp?.reports ?? []).filter((r) => r.kinds.includes('critical')).map((r) => r.id));
+  const drawEdges = imp ? imp.pathEdges : data.edges;
+  for (const [a, b] of drawEdges) {
     if (hidden.has(a) || hidden.has(b)) continue;
     const cls = ['edge'];
+    if (imp && impEdges.has(`${a}>${b}`)) cls.push('imp');
     if (selected && b === selected) cls.push('hot-in');
     else if (selected && a === selected) cls.push('hot-out');
     else if (dimmed(a) || dimmed(b)) cls.push(findSet || pHl ? 'dim' : data.filter.scope === 'project' ? 'ctx' : 'dim');
@@ -277,6 +296,7 @@ function draw() {
     const p = pos.get(n.id)!;
     const cls = ['node'];
     if (dimmed(n.id) && n.id !== selected) cls.push(findSet || pHl ? 'dim' : data.filter.scope === 'project' ? 'ctx' : 'dim');
+    if (imp) { cls.push('imp'); if (rptIds.has(n.id)) cls.push('rpt'); if (critIds.has(n.id)) cls.push('crit'); }
     if (n.id === data.focus) cls.push('focus');
     if (n.id === selected) cls.push('sel');
     if (KIND[n.kind]?.dashed) cls.push('eph');
@@ -350,6 +370,132 @@ function renderBar() {
   if (data.truncated) selBar.append(h('span', { className: 'chip' }, `Showing first 400 of ${data.truncated + 400} — narrow the filter`));
 }
 
+// ---------------------------------------------------------------- save the lineage as an image
+const STYLE_PROPS = ['fill', 'fill-opacity', 'stroke', 'stroke-width', 'stroke-dasharray', 'stroke-opacity', 'opacity', 'font-family', 'font-size', 'font-weight', 'text-anchor', 'letter-spacing', 'display', 'visibility'];
+
+/** The whole graph (not only what is on screen) as a standalone SVG: the page's CSS and theme colors are baked into every element. */
+function graphSvg(): { svg: string; w: number; h: number } | null {
+  const root = document.getElementById('root') as unknown as SVGGElement | null;
+  if (!root || !data) return null;
+  const bb = root.getBBox();
+  if (!bb.width || !bb.height) return null;
+  const pad = 28;
+  const clone = svg.cloneNode(true) as SVGSVGElement;
+  const bake = (a: Element, b: Element) => {
+    const cs = getComputedStyle(a);
+    const prop = (p: string) => (p === 'font-family' ? `${cs.getPropertyValue(p)}, system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif` : cs.getPropertyValue(p)); // fallbacks for viewers without the editor's font
+    b.setAttribute('style', STYLE_PROPS.map((p) => `${p}:${prop(p)}`).join(';'));
+    b.removeAttribute('class');
+    for (let i = 0; i < a.children.length; i++) if (b.children[i]) bake(a.children[i], b.children[i]);
+  };
+  bake(svg, clone);
+  const x = bb.x - pad, y = bb.y - pad, w = Math.ceil(bb.width + pad * 2), h = Math.ceil(bb.height + pad * 2);
+  const croot = clone.querySelector('#root');
+  croot?.removeAttribute('transform');
+  const bg = getComputedStyle(document.body).backgroundColor || '#1e1e1e';
+  clone.setAttribute('xmlns', NS);
+  clone.setAttribute('viewBox', `${x} ${y} ${w} ${h}`);
+  clone.setAttribute('width', String(w)); clone.setAttribute('height', String(h));
+  clone.removeAttribute('style');
+  const back = document.createElementNS(NS, 'rect');
+  back.setAttribute('x', String(x)); back.setAttribute('y', String(y)); back.setAttribute('width', String(w)); back.setAttribute('height', String(h)); back.setAttribute('fill', bg);
+  croot?.parentNode?.insertBefore(back, croot);
+  return { svg: `<?xml version="1.0" encoding="UTF-8"?>\n${new XMLSerializer().serializeToString(clone)}`, w, h };
+}
+
+/** The same drawing as a PNG at `scale` times its size (kept inside what a canvas can hold). */
+async function graphPng(scale: number): Promise<{ b64: string; w: number; h: number } | null> {
+  const g = graphSvg();
+  if (!g) return null;
+  const s = Math.max(1, Math.min(scale, 16000 / Math.max(g.w, g.h), Math.sqrt(150e6 / (g.w * g.h))));
+  const W = Math.round(g.w * s), H = Math.round(g.h * s);
+  const img = new Image();
+  await new Promise<void>((res, rej) => { img.onload = () => res(); img.onerror = () => rej(new Error('the browser could not draw the SVG')); img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(g.svg)}`; });
+  const canvas = document.createElement('canvas');
+  canvas.width = W; canvas.height = H;
+  const c2 = canvas.getContext('2d')!;
+  c2.drawImage(img, 0, 0, W, H);
+  const blob: Blob | null = await new Promise((res) => canvas.toBlob(res, 'image/png'));
+  if (!blob) return null;
+  const url: string = await new Promise((res) => { const r = new FileReader(); r.onload = () => res(String(r.result)); r.readAsDataURL(blob); });
+  return { b64: url.slice(url.indexOf(',') + 1), w: W, h: H };
+}
+
+async function doExport(format: 'svg' | 'png', scale: number) {
+  try {
+    const name = data?.nodes.find((n) => n.id === data!.focus)?.name ?? 'lineage';
+    if (format === 'svg') { const g = graphSvg(); if (g) post({ type: 'saveImage', format, data: g.svg, width: g.w, height: g.h, name }); else post({ type: 'saveImage', error: 'There is no graph to save yet.' }); }
+    else { const p = await graphPng(scale); if (p) post({ type: 'saveImage', format, data: p.b64, width: p.w, height: p.h, name }); else post({ type: 'saveImage', error: 'There is no graph to save yet.' }); }
+  } catch (e: any) { post({ type: 'saveImage', error: `Could not make the image: ${e?.message ?? e}` }); }
+}
+
+// ---------------------------------------------------------------- Impact view: which reports does a change affect?
+function renderImpact() {
+  const im = data?.impact;
+  const show = !!im;
+  const was = idlg.classList.contains('show');
+  idlg.classList.toggle('show', show);
+  if (show && !was) toFront(idlg); // opened last: in front of the other dialogs
+  document.getElementById('impactbtn')?.classList.toggle('on', !!im);
+  if (!show || !im || !data) { idlg.replaceChildren(); return; }
+  const name = data.nodes.find((n) => n.id === data!.focus)?.name ?? '';
+  const link = (text: string, msg: object) => h('a', { onclick: () => post(msg), style: 'cursor:pointer' }, text);
+  const mono = 'font-family:var(--vscode-editor-font-family,monospace);font-size:12px;line-height:1.6';
+  const entryLines = (list: Entry[], prefix = '') => list.flatMap((e) => [h('span', { style: e.error ? 'color:var(--vscode-errorForeground)' : prefix ? 'opacity:.7' : '', title: e.error ?? '' }, `${prefix}${e.entry}  (${e.error ? 'invalid' : e.count})`), h('br', {})]);
+  const rep = im.reports.filter((r) => r.kinds.includes('report')), crit = im.reports.filter((r) => r.kinds.includes('critical'));
+  const line = (r: ImpactInfo['reports'][number]) => `${r.name} (${r.hops} hop${r.hops === 1 ? '' : 's'}): ${r.path.join(' -> ')}${r.pipelines.length ? ` | run by ${r.pipelines.join(', ')}` : ''}`;
+  const copyText = () => `${name} impacts ${im.reportTotal} report(s) and ${im.criticalTotal} critical model(s):\n${crit.length ? `Critical models:\n${crit.map(line).join('\n')}\n` : ''}${rep.length ? `Reports:\n${rep.map(line).join('\n')}` : ''}`;
+  const body = h('div', { className: 'db', style: 'display:flex;flex-direction:column;gap:8px' });
+  const row = (r: ImpactInfo['reports'][number]) => {
+    const el2 = h('div', { className: 'irow' }, h('div', { style: 'font-weight:500' }, `${r.name} · ${r.hops} hop${r.hops === 1 ? '' : 's'}`), h('div', { className: 'ip' }, r.path.join(' → ')),
+      ...(r.pipelines.length ? [h('div', { className: 'iq', style: 'display:flex;align-items:center;gap:5px' }, airflowLogoHtml(14), `run by ${r.pipelines.join(', ')}`)] : []));
+    el2.addEventListener('click', () => { selected = r.id; draw(); centerOn(r.id); });
+    return el2;
+  };
+  if (!im.configured) {
+    body.append(
+      h('div', {}, h('b', {}, 'Choose what a change should be checked against')),
+      h('div', { className: 'muted' }, 'Reports and critical models. Combine as many sources as you like: dbt exposures, tags, folders, single files, or any dbt selector.'),
+      h('div', { className: 'ip', style: mono }, 'exposures', h('br', {}), 'tag:report', h('br', {}), 'folder:reporting', h('br', {}), 'file:rpt_pnl.sql', h('br', {}), 'tag:finance,config.materialized:view'),
+      h('button', { onclick: () => post({ type: 'setupReports' }) }, 'Choose what counts as a report…'),
+      h('button', { className: 'sec', onclick: () => post({ type: 'setupReports', kind: 'critical' }) }, 'Choose which models are critical…'),
+      h('div', { className: 'muted' }, 'Or edit the lists in the ', link('settings', { type: 'openSettings' }), ' (dbtAirflow.reports.include and dbtAirflow.critical.include).'),
+    );
+  } else {
+    body.append(
+      h('div', { style: 'display:flex;gap:6px;flex-wrap:wrap;align-items:center' },
+        h('span', { className: 'chip' }, `${im.reportTotal} report${im.reportTotal === 1 ? '' : 's'}`), h('span', { className: 'chip', style: 'background:#f5a52433' }, `${im.criticalTotal} critical`), h('span', { className: 'chip' }, `${im.downstream} downstream`),
+        h('button', { className: 'sec', style: 'margin-left:auto', onclick: () => post({ type: 'copy', text: copyText() }) }, ico('copy', 13), 'Copy list')),
+      h('div', { className: 'muted' }, 'Reports: ', link('change', { type: 'setupReports' }), ' · critical models: ', link(im.criticalEntries.length ? 'change' : 'add', { type: 'setupReports', kind: 'critical' }), ' · ', link('settings', { type: 'openSettings' })),
+      h('div', { className: 'ip', style: mono }, ...entryLines(im.entries), ...entryLines(im.excluded, 'exclude '),
+        ...(im.criticalEntries.length ? [h('b', { style: 'font-weight:500' }, 'critical'), h('br', {})] : []), ...entryLines(im.criticalEntries), ...entryLines(im.criticalExcluded, 'exclude ')),
+    );
+    if (!im.reports.length) body.append(h('div', { className: 'muted' }, `Nothing downstream of this model matches (${im.definition}). If you expected something, check the sources above.`));
+    if (crit.length) body.append(h('div', { style: 'font-weight:500;color:#f5c26b' }, `Critical models (${crit.length})`), ...crit.map(row));
+    if (rep.length) body.append(h('div', { style: 'font-weight:500;color:#f09a95' }, `Reports (${rep.length})`), ...rep.map(row));
+    if (im.total > im.reports.length) body.append(h('div', { className: 'muted' }, `Showing the nearest ${im.reports.length} of ${im.total}.`));
+  }
+  idlg.replaceChildren(h('div', { className: 'dh' }, h('b', {}, `Impact of ${name}`), h('a', { className: 'x', onclick: () => post({ type: 'impact', on: false }) }, '✕')), body);
+}
+const impactBtn = document.getElementById('impactbtn')!;
+function impactIcon(): SVGElement { // a report page with a chart and a magnifier, in color
+  const svgEl = document.createElementNS(NS, 'svg');
+  svgEl.setAttribute('width', '18'); svgEl.setAttribute('height', '18'); svgEl.setAttribute('viewBox', '0 0 24 24');
+  const kids: [string, Record<string, string | number>][] = [
+    ['path', { d: 'M6.5 2.5h8l4 4v12a1.5 1.5 0 0 1-1.5 1.5h-10.5A1.5 1.5 0 0 1 5 18.5v-14A2 2 0 0 1 6.5 2.5z', fill: '#f2f2f2', stroke: 'currentColor', 'stroke-width': 1.4, 'stroke-linejoin': 'round' }],
+    ['path', { d: 'M14.5 2.5v4h4', fill: '#bdbdbd', stroke: 'currentColor', 'stroke-width': 1.2, 'stroke-linejoin': 'round' }],
+    ['rect', { x: 7, y: 11.5, width: 2.2, height: 5, fill: '#6fb0f0' }], ['rect', { x: 10.2, y: 9.5, width: 2.2, height: 7, fill: '#4d8dff' }], ['rect', { x: 13.4, y: 12, width: 2.2, height: 4.5, fill: '#6fb0f0' }],
+    ['path', { d: 'M6.8 10l3-2.2 2.2 1.4 4-3', fill: 'none', stroke: '#f5a524', 'stroke-width': 1.5, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }],
+    ['circle', { cx: 14.2, cy: 14.6, r: 3.7, fill: 'rgba(255,255,255,.55)', stroke: 'currentColor', 'stroke-width': 1.5 }],
+    ['path', { d: 'M17 17.4l3.6 3.6', stroke: '#f5a524', 'stroke-width': 2.4, 'stroke-linecap': 'round' }],
+  ];
+  for (const [n, a] of kids) svgEl.append(el(n, a));
+  return svgEl;
+}
+impactBtn.replaceChildren(impactIcon(), h('span', {}, 'Impact'));
+impactBtn.setAttribute('data-tip', 'Show which reports a change to this model affects. The first time, you choose what counts as a report.');
+impactBtn.addEventListener('click', () => post({ type: 'impact', on: !data?.impact }));
+
 // ---------------------------------------------------------------- legend
 function renderLegend() {
   legend.style.display = showLegend && data ? 'grid' : 'none';
@@ -380,8 +526,10 @@ function renderLegend() {
 function renderAirflow() {
   dlg.replaceChildren();
   const n = data?.nodes.find((x) => x.id === airflowFor);
-  if (!data || !n) { dlg.classList.remove('show'); return; }
+  if (!data || !n) { dlg.classList.remove('show'); dlgKey = ''; return; }
   dlg.classList.add('show');
+  const dk = `${airflowFor}|${airflowFocus}`;
+  if (dk !== dlgKey) { dlgKey = dk; toFront(dlg); }
   const total = n.triggers.length + n.ingest.length;
   dlg.append(h('div', { className: 'dh' }, airflowLogoHtml(20), h('b', {}, `Airflow pipelines (${total})`), h('a', { className: 'x', onclick: () => { airflowFor = null; draw(); renderAirflow(); } }, '✕')));
   dlg.append(h('div', { className: 'muted dsub' }, n.name));
@@ -749,6 +897,7 @@ function renderModel() {
   ldlg.replaceChildren();
   if (!n) { ldlg.classList.remove('show'); return; }
   ldlg.classList.add('show');
+  if (ldlgKey !== String(modelFor)) { ldlgKey = String(modelFor); toFront(ldlg); }
 
   const badge = h('span', { className: 'kbadge', style: `background:${colorOf(n.kind)}` }, ico(iconOfKind(n.kind), 18));
   ldlg.append(h('div', { className: 'mh' }, badge,
@@ -871,6 +1020,7 @@ const encodeKinds = (sel: Set<string>) => (sel.size === ALL_KINDS.length ? [] : 
 function renderFilter() {
   fdlg.replaceChildren();
   if (!data || !filterOpen) { fdlg.classList.remove('show'); return; }
+  if (!fdlg.classList.contains('show')) toFront(fdlg);
   fdlg.classList.add('show');
   const f = data.filter;
   const kinds = selectedKinds(f);
@@ -1039,16 +1189,10 @@ findIn.addEventListener('keydown', (e) => {
 type SyncMsg = { state: string; text: string; at: number | null; source?: 'none' | 'local' | 'gcs' };
 let airflowSrc: 'none' | 'local' | 'gcs' = 'none';
 const syncBtn = document.getElementById('sync') as HTMLButtonElement;
-const setupBtn = document.getElementById('asetup') as HTMLButtonElement;
-setupBtn.replaceChildren(ico('gear', 14));
-setupBtn.setAttribute('data-tip', 'Change where Airflow pipelines come from');
-setupBtn.addEventListener('click', () => post({ type: 'setupAirflow' }));
 syncBtn.addEventListener('click', () => post({ type: airflowSrc === 'gcs' ? 'syncDags' : airflowSrc === 'local' ? 'rescan' : 'setupAirflow' }));
 function showSync(m: SyncMsg) {
   airflowSrc = m.source ?? airflowSrc;
-  const label = airflowSrc === 'gcs' ? 'Sync DAGs' : airflowSrc === 'local' ? 'Rescan DAGs' : 'Set up Airflow';
-  syncBtn.replaceChildren(airflowLogoHtml(14), h('span', {}, label));
-  setupBtn.style.display = airflowSrc === 'none' ? 'none' : '';
+  syncBtn.replaceChildren(airflowLogoHtml(14), h('span', {}, 'Sync DAGs')); // the first click asks where the pipelines come from; afterwards it just syncs
   syncBtn.disabled = m.state === 'running';
   syncBtn.classList.toggle('spin', m.state === 'running');
   syncBtn.classList.toggle('bad', m.state === 'error');
@@ -1057,7 +1201,7 @@ function showSync(m: SyncMsg) {
     m.state === 'error' ? `Sync failed: ${m.text}` : m.state === 'running' ? m.text
       : airflowSrc === 'gcs' ? `Refresh the Airflow DAGs from GCS\n${m.text ? m.text + ' · ' : ''}${when}`
       : airflowSrc === 'local' ? `Re-read the DAG folder(s)\n${m.text}`
-      : 'Optional: show which Airflow pipelines run each model.\nPick a local folder or a Google Cloud Storage bucket.');
+      : 'Optional: show which Airflow pipelines run each model.\nThe first click asks where they come from (a local folder or a Google Cloud Storage bucket).');
 }
 showSync({ state: 'idle', text: '', at: null, source: 'none' });
 
@@ -1070,6 +1214,22 @@ setIcon('lbtn', 'info', 'Show or hide the legend');
 setIcon('zin', 'plus', 'Zoom in');
 setIcon('zout', 'minus', 'Zoom out');
 setIcon('fit', 'expand', 'Fit to view');
+setIcon('expbtn', 'download', 'Save the lineage as an image (SVG or PNG)');
+document.getElementById('expbtn')!.addEventListener('click', () => post({ type: 'exportMenu' }));
+const askBtn = document.getElementById('askai')!;
+{ // speech bubble with the words "Ask AI", drawn in the same current color as the other toolbar icons
+  const bubble = document.createElementNS(NS, 'svg');
+  bubble.setAttribute('width', '58'); bubble.setAttribute('height', '26'); bubble.setAttribute('viewBox', '0 0 58 26');
+  bubble.append(el('path', { d: 'M9 2H49a7 7 0 0 1 7 7v6a7 7 0 0 1-7 7H17l-7 4 1.6-4.2A7 7 0 0 1 2 15V9a7 7 0 0 1 7-7z', fill: 'none', stroke: 'currentColor', 'stroke-width': 1.8, 'stroke-linejoin': 'round' }));
+  bubble.append(el('text', { x: 29, y: 15.5, 'text-anchor': 'middle', 'font-size': 10.5, 'font-weight': 700, fill: 'currentColor' }, 'Ask AI'));
+  askBtn.replaceChildren(bubble);
+}
+askBtn.setAttribute('data-tip', 'Ask the AI agent which reports this model impacts (opens VS Code chat)');
+askBtn.addEventListener('click', () => post({ type: 'askAi' }));
+const settingsBtn = document.getElementById('settingsbtn')!;
+settingsBtn.replaceChildren(ico('gear', 17));
+settingsBtn.setAttribute('data-tip', 'Open the settings of this extension');
+settingsBtn.addEventListener('click', () => post({ type: 'openSettings' }));
 document.getElementById('findic')?.replaceChildren(ico('search', 14));
 document.getElementById('ph')?.replaceChildren(ico('search', 15), 'Search with selectors');
 document.getElementById('fit')!.addEventListener('click', () => { fit(); applyView(); });
@@ -1115,7 +1275,14 @@ window.addEventListener('message', (ev) => {
     return;
   }
   if (m?.type === 'sync') { showSync(m); return; }
-  if (m?.type === 'busy') { document.getElementById('busy')!.classList.toggle('on', !!m.on); return; }
+  if (m?.type === 'doExport') { void doExport(m.format === 'png' ? 'png' : 'svg', Number(m.scale) || 3); return; }
+  if (m?.type === 'busy') {
+    document.getElementById('busy')!.classList.toggle('on', !!m.on);
+    const t = document.getElementById('busytxt')!;
+    t.textContent = m.on ? (m.text || 'Working…') : '';
+    t.classList.toggle('on', !!m.on);
+    return;
+  }
   if (m?.type !== 'graph') return;
   const prev = data?.focus;
   const prevLayoutKey = data ? data.nodes.map((n) => n.id).join('|') : '';
@@ -1129,12 +1296,14 @@ window.addEventListener('message', (ev) => {
     if (airflowFor !== data.focus) airflowFor = null;
     if (modelFor !== data.focus) modelFor = null;
   }
+  renderImpact(); // before fitting: the open panel takes space on the right
   const relayout = prevLayoutKey !== data.nodes.map((n) => n.id).join('|') || prev !== data.focus;
   if (relayout) { layout(); if (!pendingExpand) fit(); }
   if (findQ) runFind(true); else draw();
   renderAirflow();
+  renderImpact();
   if (refocused && left === 'model') openModel(data.focus); // an open details dialog follows the focused model
-  if (refocused) centerOn(data.focus, 1); // zoom in on the newly focused model
+  if (refocused && !data.impact) centerOn(data.focus, 1); // zoom in on the newly focused model (the Impact view fits all its paths instead)
   else if (pendingExpand) { if (pos.has(pendingExpand)) centerOn(pendingExpand); pendingExpand = null; }
   // a new search: select + center the model(s) you searched for (they may sit far from the middle of a big graph)
   const fkey = `${data.filter.select}|${data.filter.exclude}`;
@@ -1143,6 +1312,7 @@ window.addEventListener('message', (ev) => {
   if (searched) { selected = data.seeds![0]; draw(); centerOn(selected, 0.9); }
   if (left !== 'model') renderLeft(); // keep in-progress YAML edits untouched when only the filter/legend changed
   if (filterOpen) renderFilter();
+  askBtn.setAttribute('data-tip', data.ai ? 'Ask the AI agent which reports this model impacts (opens VS Code chat)' : 'Ask the AI agent which reports this model impacts. AI is off: you will be asked to turn it on first.');
   if (!suggestAttached) { suggestAttached = true; attachSuggest(q, data.allTags); }
   // a selector with + operators (1+m+1, m+1) sets the depths itself; -1 = unlimited
   for (const [inp, v] of [[up, data.depthUp], [down, data.depthDown]] as const) {
@@ -1167,6 +1337,8 @@ function makeResizable(d: HTMLElement, side: 'left' | 'right', height: boolean) 
   const hw = mk('rzw'), hh = height ? mk('rzh') : null;
   const place = () => {
     const show = d.classList.contains('show');
+    const z = String((parseInt(d.style.zIndex, 10) || 4) + 1);
+    hw.style.zIndex = z; if (hh) hh.style.zIndex = z;
     hw.style.display = show ? 'block' : 'none';
     if (hh) hh.style.display = show ? 'block' : 'none';
     if (!show) return;
@@ -1188,11 +1360,12 @@ function makeResizable(d: HTMLElement, side: 'left' | 'right', height: boolean) 
   });
   drag(hw, 'w'); if (hh) drag(hh, 'h');
   new ResizeObserver(place).observe(d);
-  new MutationObserver(place).observe(d, { attributes: true, attributeFilter: ['class'] });
+  new MutationObserver(place).observe(d, { attributes: true, attributeFilter: ['class', 'style'] });
   window.addEventListener('resize', place);
 }
 makeResizable(ldlg, 'left', true);
 makeResizable(dlg, 'right', true);
 makeResizable(fdlg, 'right', false);
+makeResizable(idlg, 'right', true);
 
 post({ type: 'ready' });

@@ -1,21 +1,11 @@
 import type { LineageIndex } from './index';
 import { parseExpression, resolve, resolveSeeds } from './selector';
+import { neighborhood } from './graph';
 import { simplestSelector } from './simplest';
+import { impactedReports, reportDefinition, reportMatch, reportsConfigured, ReportConfig } from './tools';
 import type { GNode, Graph } from './types';
 
-export function neighborhood(g: Graph, id: string, up: number, down: number = up) {
-  const level = new Map<string, number>([[id, 0]]);
-  const bfs = (map: Record<string, string[]>, sign: 1 | -1, depth: number) => {
-    let fr = [id];
-    for (let d = 1; d <= depth && fr.length; d++) {
-      const nx: string[] = [];
-      for (const n of fr) for (const m of map[n] ?? []) if (!level.has(m)) { level.set(m, d * sign); nx.push(m); }
-      fr = nx;
-    }
-  };
-  bfs(g.parents, -1, up); bfs(g.children, 1, down);
-  return level;
-}
+export { neighborhood };
 
 /** Keep the nodes nearest to the searched model(s): breadth-first from the seeds, then the rest by name. */
 function orderBySeeds(g: Graph, matched: Set<string>, seeds: string[]): string[] {
@@ -99,7 +89,7 @@ const allTags = (g: Graph) => (allTagsCache?.g === g ? allTagsCache.tags : (allT
 /** Nodes the user opened with a + button: their direct children (down) / parents (up) are added on top of the chosen depth. */
 export interface Expansion { up: Iterable<string>; down: Iterable<string> }
 
-export function buildPayload(index: LineageIndex, filter: FilterState, id: string, up: number, down: number = up, expand?: Expansion) {
+export function buildPayload(index: LineageIndex, filter: FilterState, id: string, up: number, down: number = up, expand?: Expansion, impactCfg?: ReportConfig | null) {
   const g = index.graph;
   const { ids: matchedIds, error } = computeMatched(g, filter);
   const sd = filter.scope === 'project' && filter.select.trim() ? selectorDepth(filter.select) : null;
@@ -109,7 +99,29 @@ export function buildPayload(index: LineageIndex, filter: FilterState, id: strin
   let seedIds: string[] = [];
   const level = new Map<string, number>();
   const more: Record<string, { up: number; down: number }> = {};
-  if (filter.scope === 'project' && matchedIds) {
+  let impact: object | undefined;
+  if (impactCfg) {
+    // Impact view: only the shortest paths from the focused model to the reports it affects
+    const configured = reportsConfigured(impactCfg);
+    const match = reportMatch(g, impactCfg);
+    const crit = reportMatch(g, { include: impactCfg.critical ?? [], exclude: impactCfg.criticalExclude ?? [] });
+    const res = configured ? impactedReports(index, id, impactCfg) : { error: 'No report definition is set yet.' };
+    const reports = 'error' in res ? [] : res.reports;
+    const pathNodes = new Set<string>([id]);
+    const pathEdges: [string, string][] = [];
+    const seenEdge = new Set<string>();
+    for (const r of reports) for (let i = 0; i < r.pathIds.length; i++) {
+      pathNodes.add(r.pathIds[i]);
+      if (i > 0 && !seenEdge.has(`${r.pathIds[i - 1]}>${r.pathIds[i]}`)) { seenEdge.add(`${r.pathIds[i - 1]}>${r.pathIds[i]}`); pathEdges.push([r.pathIds[i - 1], r.pathIds[i]]); }
+    }
+    ids = new Set([...pathNodes].slice(0, MAX_PROJECT_NODES));
+    impact = {
+      configured, definition: reportDefinition(impactCfg), entries: match.include, excluded: match.exclude, criticalEntries: crit.include, criticalExcluded: crit.exclude,
+      error: 'error' in res ? res.error : undefined, downstream: 'error' in res ? 0 : res.downstream,
+      reports: reports.slice(0, 200).map((r) => ({ id: r.id, name: r.name, kinds: r.kinds, hops: r.hops, path: r.path, pipelines: r.pipelines })), reportTotal: reports.filter((r) => r.kinds.includes('report')).length, criticalTotal: reports.filter((r) => r.kinds.includes('critical')).length, total: reports.length,
+      pathEdges: pathEdges.filter(([a, b]) => ids.has(a) && ids.has(b)),
+    };
+  } else if (filter.scope === 'project' && matchedIds) {
     seedIds = filter.select.trim() ? [...resolveSeeds(g, filter.select)].filter((i) => matchedIds.has(i)) : [];
     const all = orderBySeeds(g, matchedIds, seedIds);
     truncated = Math.max(0, all.length - MAX_PROJECT_NODES);
@@ -161,6 +173,7 @@ export function buildPayload(index: LineageIndex, filter: FilterState, id: strin
     seeds: seedIds.filter((i) => ids.has(i)),
     allTags: allTags(g),
     more,
+    impact,
     selector: simplestSelector(g, ids, { focus: id, scope: filter.scope === 'project' && matchedIds ? 'project' : 'lineage', up, down, expandUp: [...(expand?.up ?? [])], expandDown: [...(expand?.down ?? [])], select: filter.select, exclude: filter.exclude }),
     pipelines: relevant.map((p) => ({
       id: p.id, name: p.name, file: p.file, schedule: p.schedule, count: p.models.size,

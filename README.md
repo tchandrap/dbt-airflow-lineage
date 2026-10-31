@@ -2,9 +2,9 @@
 
 A VS Code extension that draws your **dbt lineage** and shows, on every model, **which Airflow pipelines run it** and **which pipeline ingests it**. It understands dbt selectors (`tag:daily`, `model+`, `1+model+1`, `--exclude …`), so the pipelines you see are the ones whose selection really includes the model.
 
-![A 30-second tour: lineage, Airflow pipelines, selector search, filters and YAML editing](docs/demo.gif)
+![A 40-second tour: lineage, Airflow pipelines, selector search, exploring with +, Impact, saving an image, Ask AI with a local MCP server, and the settings](docs/demo.gif)
 
-*A 30-second tour on a made-up shop project: click a model, see which Airflow pipelines run it, search with dbt selectors, filter, find the ingestion pipeline of a source, and edit the YAML in place.*
+*A 40-second tour on a made-up shop project: click a model, see which Airflow pipelines run it, search with dbt selectors, explore with the + buttons, check the impact of a change, save the graph as an image, set up Ask AI with its local MCP server, and open the settings. The small boxes marked "illustration of the editor dialog" stand in for the editor's own dialogs, which a recording of the graph view cannot capture; their texts and the tool answers come from the extension itself.*
 
 ## What you get
 
@@ -14,6 +14,10 @@ A VS Code extension that draws your **dbt lineage** and shows, on every model, *
 - **dbt selector search.** A floating search box takes real dbt syntax: `tag:finance,tag:daily`, `+orders`, `1+orders+1`, `orders+1`, `path:models/marts`. A `+` in the selector sets the upstream / downstream depth for you.
 - **Filter** by select, exclude, resource type, and model materialization (table, view, incremental, ephemeral, materialized view). **Find in graph** dims everything but the nodes you type.
 - **Edit the YAML without leaving the graph.** The model dialog shows description, tags, config, meta, tests, and columns from the model's properties file. Edit them and press **Submit**; only the lines you changed are written, so comments and formatting stay untouched.
+- **Explore with +.** The models at the edge of the graph have a **+** button that shows their downstream (right) or upstream (left) models, one level at a time, without changing your Upstream / Downstream numbers. The search box always shows the shortest dbt selector for what is on screen.
+- **Impact.** Click **Impact** to see which **critical models** and **reports** a change to the focused model reaches. Only the paths are drawn (critical models amber, reports red), and a panel lists each one with its path and the Airflow pipelines (and schedules) that run it. What counts as a report or a critical model is yours to define, as a combined list: dbt exposures, tags, folders, files, or any dbt selector.
+- **Save as an image.** The download button saves the whole graph as an **SVG** (sharp at any zoom) or a high-resolution **PNG** (3x or 6x).
+- **Optional AI.** Off by default. **Ask AI** lets your editor's agent ask the extension about your lineage: which reports a change impacts, which pipelines run a model, what a selector picks. In Cursor it sets up a **local MCP server** (bundled, read-only, no network); in VS Code it adds tools for the VS Code agent. It can also be connected to Claude Code, Claude Desktop, OpenAI Codex CLI or any MCP client. The AI only receives model, report and pipeline names, never SQL or data. (ChatGPT only connects to servers on the internet, so it cannot use a local one.)
 - **Optional Airflow.** Lineage works on its own. Add a local DAG folder, or mirror DAGs from a Google Cloud Storage bucket, whenever you want pipelines.
 
 |  |  |
@@ -93,6 +97,11 @@ Nothing is downloaded until you choose Google Cloud Storage and confirm. Only `.
 | Type in the floating search | Show a dbt selection as its own graph (`tag:a,tag:b`, `model+1`, …) |
 | Funnel button | Select / exclude / type filter |
 | Search icon at the top right | Find a node by name or tag in the current graph |
+| **+** on an edge model | Show its downstream (right) or upstream (left) models |
+| **Impact** | The critical models and reports a change reaches, with paths and pipelines |
+| Download button (bottom right) | Save the graph as SVG or PNG |
+| **Ask AI** | Set up the optional AI helper and ask about the lineage |
+| Gear (top right) | Open this extension's settings |
 | Pencil in the model dialog | Edit that section; **Submit** writes the YAML |
 
 Selector syntax follows dbt: a space is a union, a comma is an intersection, `+model` adds parents, `model+` adds children, `N+` limits depth, `@model` adds everything related, and **Exclude** removes nodes from the selection. While you type `tag:` the extension suggests your project's tags.
@@ -112,6 +121,16 @@ Search for "dbt Airflow" in Settings, or edit `settings.json`:
 | `dbtAirflow.dagsSyncExclude` | only `.py`, no `tests/` | Regexes for bucket objects *not* to download (see below). |
 | `dbtAirflow.upstreamDepth` / `downstreamDepth` | `2` / `2` | Levels shown around the focused model. |
 | `dbtAirflow.dbtCommand` | `dbt` | Command used by **Run dbt parse**. |
+| `dbtAirflow.reports.include` / `exclude` | `[]` | What counts as a **report**. Combined entries: `exposures`, `tag:report`, `folder:reporting`, `file:rpt_pnl.sql`, `path:models/marts`, or any dbt selector. |
+| `dbtAirflow.critical.include` / `exclude` | `[]` | Which models are **critical**, written the same way (for example `tag:critical`). |
+| `dbtAirflow.ai.enabled` | `false` | Optional AI (see above). The **Ask AI** button asks before turning it on. |
+
+Every setting has a longer description with examples in the Settings screen. Example:
+
+```json
+"dbtAirflow.reports.include": ["exposures", "tag:report", "folder:reporting", "file:rpt_pnl.sql"],
+"dbtAirflow.critical.include": ["tag:critical", "folder:regulatory_reports"]
+```
 
 ## Commands
 
@@ -120,6 +139,10 @@ Search for "dbt Airflow" in Settings, or edit `settings.json`:
 - **dbt Airflow: Sync Airflow DAGs from GCS**
 - **dbt Airflow: Run dbt parse**
 - **dbt Airflow: Refresh (re-read manifest and DAGs)**
+- **dbt Airflow: Choose what counts as a report…** and **Choose which models are critical…**
+- **dbt Airflow: Save the lineage as an image (SVG or PNG)…**
+- **dbt Airflow: Ask AI about this model (impacted reports)** (shortcut `Cmd+Alt+A`)
+- **dbt Airflow: Connect an AI tool to the lineage (Claude, Codex, other)…**
 
 ## How it works
 
