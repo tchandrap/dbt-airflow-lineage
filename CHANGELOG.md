@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 — 2026-11-01
 
 - Optional AI (off by default, `dbtAirflow.ai.enabled`): ask your editor's AI agent which reports a model change impacts, which pipelines run it, what a selector picks. Settings `dbtAirflow.reports.include` / `exclude` define a report: a list of sources that are combined (`exposures`, `tag:report`, `folder:reporting`, `file:rpt_pnl.sql`, `path:…`, or any dbt selector), minus an exclude list.
 - **Ask AI** button, command and shortcut (Cmd+Alt+A). The first click asks for confirmation. In VS Code it opens the chat in Agent mode; in Cursor it sets up a local MCP server (bundled, read-only, no network) and copies the question.

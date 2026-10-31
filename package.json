@@ -2,7 +2,7 @@
   "name": "dbt-airflow-lineage",
   "displayName": "dbt airflow lineage",
   "description": "Interactive dbt lineage graph that also shows which Airflow pipelines run and ingest each model, resolving dbt selectors (tags, graph operators, excludes). Edit model YAML in place.",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "publisher": "tchandrap",
   "license": "MIT",
   "author": {
