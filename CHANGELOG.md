@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.1 — 2026-11-17
 
 - The same DAG name defined in several files (a config file and the DAG file generated from it, for example) is now one pipeline in the Airflow dialog, with an "also defined in" link, and the Airflow badge counts it once.
 - New settings `dbtAirflow.pipelines.include` and `dbtAirflow.pipelines.exclude` choose which DAGs are shown, by DAG name, file or folder with wildcards (for example `["regulatory_reports__acmefin_monthly_15"]` shows only that DAG). The lineage view, the Impact panel and the AI answers use the filtered list.
