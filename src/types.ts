@@ -53,4 +53,6 @@ export interface Pipeline {
   schedule?: string;
   sites: SelectionSite[];
   ingests?: IngestRef[];
+  explicitName?: boolean; // the DAG name was found in the code (not just taken from the file name)
+  alsoIn?: { file: string; line: number }[]; // other files that define the same DAG name
 }

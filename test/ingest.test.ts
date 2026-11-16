@@ -8,17 +8,17 @@ ALTO_REPORTS = [
     {
         "name": "tia",
         "bq_dataset": "regulatory_reports_external_sources",
-        "bq_table": "antasena_M_tia01",
+        "bq_table": "acmefin_M_aa01",
     },
     {
         "name": "pia",
         "bq_dataset": "regulatory_reports_external_sources",
-        "bq_table": "antasena_M_pia01",
+        "bq_table": "acmefin_M_bb01",
     },
 ]
 SUBMITTED = {
-    "bq_table": "antasena_m_tia01_submitted",
-    "load": {"full_table_schema_reference": f"{GCP_PROJECT_ID}.regulatory_reports_external_sources.antasena_m_tia01_submitted", "dataset_outlet": "x__y"},
+    "bq_table": "acmefin_m_aa01_submitted",
+    "load": {"full_table_schema_reference": f"{GCP_PROJECT_ID}.regulatory_reports_external_sources.acmefin_m_aa01_submitted", "dataset_outlet": "x__y"},
 }
 @dag(
     dag_id=get_dag_id(__file__),
@@ -35,10 +35,10 @@ describe('ingestion targets in DAG code', () => {
     expect(p.schedule).toBe('0 0 3 * *');
     const refs = (p.ingests ?? []).map((r) => `${r.dataset ?? '?'}.${r.table}`).sort();
     expect(refs).toEqual([
-      'regulatory_reports_external_sources.antasena_M_pia01',
-      'regulatory_reports_external_sources.antasena_M_tia01',
-      'regulatory_reports_external_sources.antasena_m_tia01_submitted',
-      '?.antasena_m_tia01_submitted',
+      'regulatory_reports_external_sources.acmefin_M_bb01',
+      'regulatory_reports_external_sources.acmefin_M_aa01',
+      'regulatory_reports_external_sources.acmefin_m_aa01_submitted',
+      '?.acmefin_m_aa01_submitted',
     ].sort());
   });
   it('does NOT treat partition checks / readers with generic dataset+table keys as ingestion', () => {
@@ -58,9 +58,9 @@ describe('ingestion targets in DAG code', () => {
 
 const mk = (name: string, o: Partial<GNode>): GNode => ({ id: `${o.type ?? 'model'}.p.${name}`, name, type: 'model', tags: [], fqn: ['p', name], path: `x/${name}.yml`, pkg: 'p', ...o });
 describe('matching ingestion to dbt nodes', () => {
-  const src = mk('antasena_M_tia01', { type: 'source', sourceName: 'regulatory_reports_external_sources', schema: 'regulatory_reports_external_sources', table: 'antasena_M_tia01' });
-  const lower = mk('antasena_m_tia01_submitted', { type: 'source', sourceName: 'regulatory_reports_external_sources', schema: 'regulatory_reports_external_sources', table: 'antasena_m_tia01_submitted' });
-  const model = mk('regulatory_reports__antasena_m_tia01', { schema: 'regulatory_reports', table: 'antasena_m_tia01' });
+  const src = mk('acmefin_M_aa01', { type: 'source', sourceName: 'regulatory_reports_external_sources', schema: 'regulatory_reports_external_sources', table: 'acmefin_M_aa01' });
+  const lower = mk('acmefin_m_aa01_submitted', { type: 'source', sourceName: 'regulatory_reports_external_sources', schema: 'regulatory_reports_external_sources', table: 'acmefin_m_aa01_submitted' });
+  const model = mk('regulatory_reports__acmefin_m_aa01', { schema: 'regulatory_reports', table: 'acmefin_m_aa01' });
   const g: Graph = { nodes: Object.fromEntries([src, lower, model].map((n) => [n.id, n])), parents: {}, children: {}, selectors: {} };
   [src, lower, model].forEach((n) => { g.parents[n.id] = []; g.children[n.id] = []; });
   const raw = parseAirflowFile('/dags/ingest.py', DAG);
@@ -70,17 +70,17 @@ describe('matching ingestion to dbt nodes', () => {
     const a = idx.ingestorsFor(src.id);
     expect(a).toHaveLength(1);
     expect(a[0].pipeline.name).toBe('ingest');
-    expect(a[0].refs[0]).toMatchObject({ match: 'exact', table: 'antasena_M_tia01' });
-    // the lower-case sibling table is a different table: it must not be claimed by the M_tia01 entry
-    expect(idx.ingestorsFor(lower.id)[0].refs.map((r) => r.table)).toEqual(['antasena_m_tia01_submitted', 'antasena_m_tia01_submitted']);
+    expect(a[0].refs[0]).toMatchObject({ match: 'exact', table: 'acmefin_M_aa01' });
+    // the lower-case sibling table is a different table: it must not be claimed by the M_aa01 entry
+    expect(idx.ingestorsFor(lower.id)[0].refs.map((r) => r.table)).toEqual(['acmefin_m_aa01_submitted', 'acmefin_m_aa01_submitted']);
   });
   it('does not attribute ingestion to a dbt model that merely has a similar name', () => {
     expect(idx.ingestorsFor(model.id)).toHaveLength(0);
   });
   it('falls back to case-insensitive and unique-table-only matches, flagged as such', () => {
-    const r1 = new LineageIndex(g, parseAirflowFile('/d/a.py', 'X={"bq_dataset":"regulatory_reports_external_sources","bq_table":"ANTASENA_M_TIA01"}\n@dag(schedule="@daily")\ndef f(): pass'));
+    const r1 = new LineageIndex(g, parseAirflowFile('/d/a.py', 'X={"bq_dataset":"regulatory_reports_external_sources","bq_table":"ACMEFIN_M_AA01"}\n@dag(schedule="@daily")\ndef f(): pass'));
     expect(r1.ingestorsFor(src.id)[0].refs[0].match).toBe('case-insensitive');
-    const r2 = new LineageIndex(g, parseAirflowFile('/d/b.py', 'X={"bq_table":"antasena_M_tia01"}\n@dag(schedule="@daily")\ndef f(): pass'));
+    const r2 = new LineageIndex(g, parseAirflowFile('/d/b.py', 'X={"bq_table":"acmefin_M_aa01"}\n@dag(schedule="@daily")\ndef f(): pass'));
     expect(r2.ingestorsFor(src.id)[0].refs[0].match).toBe('table-only');
   });
 });

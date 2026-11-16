@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { LineageIndex, scanAirflow } from '../index';
+import { preparePipelines } from '../pipelines';
 import { slim } from '../slim';
 import type { ReportConfig } from '../tools';
 import type { Graph } from '../types';
@@ -34,7 +35,7 @@ export function makeLoader(env: NodeJS.ProcessEnv): () => { index: LineageIndex 
       if (graphFile && fs.existsSync(graphFile)) graph = JSON.parse(fs.readFileSync(graphFile, 'utf8'));
       else if (manifest && fs.existsSync(manifest)) graph = slim(JSON.parse(fs.readFileSync(manifest, 'utf8')));
       if (!graph) return { error: 'No dbt manifest found. Open the dbt project in the editor once, or run `dbt parse` so target/manifest.json exists (set DBT_AIRFLOW_MANIFEST for a standalone setup).' };
-      const index = new LineageIndex(graph, dags.length ? scanAirflow(dags) : []);
+      const index = new LineageIndex(graph, dags.length ? preparePipelines(scanAirflow(dags), { include: list(env.DBT_AIRFLOW_PIPELINES_INCLUDE), exclude: list(env.DBT_AIRFLOW_PIPELINES_EXCLUDE) }) : []);
       cached = { key, index };
       return { index };
     } catch (e: any) { return { error: `Could not load the dbt project: ${e?.message ?? e}` }; }

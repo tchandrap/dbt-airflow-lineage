@@ -176,7 +176,7 @@ export function buildPayload(index: LineageIndex, filter: FilterState, id: strin
     impact,
     selector: simplestSelector(g, ids, { focus: id, scope: filter.scope === 'project' && matchedIds ? 'project' : 'lineage', up, down, expandUp: [...(expand?.up ?? [])], expandDown: [...(expand?.down ?? [])], select: filter.select, exclude: filter.exclude }),
     pipelines: relevant.map((p) => ({
-      id: p.id, name: p.name, file: p.file, schedule: p.schedule, count: p.models.size,
+      id: p.id, name: p.name, file: p.file, schedule: p.schedule, alsoIn: p.alsoIn, count: p.models.size,
       selected: nodes.filter((n) => touches(p, n.id)).map((n) => n.id),
     })),
   };

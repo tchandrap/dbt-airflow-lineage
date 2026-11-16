@@ -8,6 +8,7 @@ import { authLoginEnv, buildExcludeRegex, classifyGcloudError, findAuthUrl, DEFA
 import { LineageIndex, ResolvedPipeline, scanAirflow } from './index';
 import { applyEdits, readMeta, Edits, MetaError, Target } from './meta';
 import { buildPayload, defaultFilter, FilterState } from './payload';
+import { preparePipelines } from './pipelines';
 import { legacyReportEntry, ReportConfig, reportMatch, reportsConfigured, runTool, TOOLS } from './tools';
 import { claudeCodeCommand, claudeDesktopConfigPath, codexToml, jsonEntry, mergeClaudeDesktopConfig, McpServerSpec } from './mcp/clients';
 import type { Graph } from './types';
@@ -362,7 +363,9 @@ async function load(): Promise<void> {
       const graph = await slimManifest(manifest);
       await step(); setBusyText('Scanning the Airflow DAGs…');
       const dirs = airflowDirs();
-      const raw = dirs.length ? scanAirflow(dirs) : [];
+      const scanned = dirs.length ? scanAirflow(dirs) : [];
+      const raw = preparePipelines(scanned, pipelineFilter()); // the include / exclude settings, and one entry per DAG name
+      if (raw.length !== scanned.length) out.appendLine(`Pipelines: ${scanned.length} found, ${raw.length} shown (filter applied, same DAG name in several files merged).`);
       await step(); setBusyText('Building the lineage index…');
       index = new LineageIndex(graph, raw);
       out.appendLine(`Indexed ${Object.keys(graph.nodes).length} nodes, ${index.pipelines.length} pipelines`);
@@ -524,7 +527,7 @@ class LineageView implements vscode.WebviewViewProvider {
           if (m.on && !reportsChosen() && !(await setupReports())) break; // first use: ask what counts as a report (critical models can be added from the panel)
           impactOn = !!m.on; post(); break;
         case 'setupReports': await setupReports(m.kind === 'critical' ? 'critical' : 'reports'); post(); break;
-        case 'openSettings': void vscode.commands.executeCommand('workbench.action.openSettings', '@ext:tchandrap.dbt-airflow-lineage'); break;
+        case 'openSettings': void openExtensionSettings(); break;
         case 'copy': if (typeof m.text === 'string') { await vscode.env.clipboard.writeText(m.text); vscode.window.setStatusBarMessage('Copied', 2000); } break;
         case 'open': openNode(m.id); break;
         case 'loadMeta': sendMeta(m.id); break;
@@ -534,7 +537,7 @@ class LineageView implements vscode.WebviewViewProvider {
         case 'syncDags': await syncDags(); break;
         case 'setupAirflow': await setupAirflow(); break;
         case 'rescan': reloadAll(); break;
-        case 'openPipeline': { const p = index.pipelines.find((x) => x.id === m.id); if (p) openAt(p.file, m.line ?? p.line); break; }
+        case 'openPipeline': { const p = index.pipelines.find((x) => x.id === m.id); if (p) openAt(typeof m.file === 'string' && p.alsoIn?.some((a) => a.file === m.file) ? m.file : p.file, m.line ?? p.line); break; }
       }
     });
   }
@@ -575,7 +578,7 @@ function html(w: vscode.Webview) {
   const js = w.asWebviewUri(vscode.Uri.joinPath(ctx.extensionUri, 'dist', 'webview.js'));
   const nonce = crypto.randomBytes(16).toString('hex');
   return `<!doctype html><html><head><meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; script-src 'nonce-${nonce}';">
 <style>
 body{margin:0;height:100vh;position:relative;overflow:hidden;font-family:var(--vscode-font-family);font-size:12px;color:var(--vscode-foreground);background:var(--vscode-editor-background)}
 #bar{position:absolute;top:0;left:0;right:0;z-index:5;padding:5px 10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:var(--vscode-editor-background);border-bottom:1px solid var(--vscode-panel-border)}
@@ -828,6 +831,7 @@ class Lenses implements vscode.CodeLensProvider {
 
 // ---------------- optional AI: tools for the editor's own agent (VS Code agent mode); off unless dbtAirflow.ai.enabled ----------------
 
+const pipelineFilter = () => ({ include: cfg().get<string[]>('pipelines.include', []) ?? [], exclude: cfg().get<string[]>('pipelines.exclude', []) ?? [] });
 const reportConfig = (): ReportConfig => ({
   include: cfg().get<string[]>('reports.include', []) ?? [], exclude: cfg().get<string[]>('reports.exclude', []) ?? [],
   critical: cfg().get<string[]>('critical.include', []) ?? [], criticalExclude: cfg().get<string[]>('critical.exclude', []) ?? [],
@@ -840,7 +844,7 @@ const MCP_NAME = 'dbt-airflow-lineage';
 /** Settings the local MCP server reads (see src/mcp/load.ts). */
 function mcpEnv(): Record<string, string> {
   const r = reportConfig();
-  const env: Record<string, string> = { DBT_AIRFLOW_VERSION: String(ctx.extension.packageJSON?.version ?? ''), DBT_AIRFLOW_REPORT_INCLUDE: JSON.stringify(r.include), DBT_AIRFLOW_REPORT_EXCLUDE: JSON.stringify(r.exclude), DBT_AIRFLOW_CRITICAL_INCLUDE: JSON.stringify(r.critical ?? []), DBT_AIRFLOW_CRITICAL_EXCLUDE: JSON.stringify(r.criticalExclude ?? []), DBT_AIRFLOW_DAGS: airflowDirs().join(path.delimiter) };
+  const env: Record<string, string> = { DBT_AIRFLOW_VERSION: String(ctx.extension.packageJSON?.version ?? ''), DBT_AIRFLOW_REPORT_INCLUDE: JSON.stringify(r.include), DBT_AIRFLOW_REPORT_EXCLUDE: JSON.stringify(r.exclude), DBT_AIRFLOW_CRITICAL_INCLUDE: JSON.stringify(r.critical ?? []), DBT_AIRFLOW_CRITICAL_EXCLUDE: JSON.stringify(r.criticalExclude ?? []), DBT_AIRFLOW_DAGS: airflowDirs().join(path.delimiter), DBT_AIRFLOW_PIPELINES_INCLUDE: JSON.stringify(pipelineFilter().include), DBT_AIRFLOW_PIPELINES_EXCLUDE: JSON.stringify(pipelineFilter().exclude) };
   if (graphCachePath) env.DBT_AIRFLOW_GRAPH = graphCachePath;
   if (manifestFile) env.DBT_AIRFLOW_MANIFEST = manifestFile;
   return env;
@@ -952,23 +956,29 @@ function syncAiTools() {
 /** Asks which image format, then has the lineage view draw it. */
 async function exportMenu() {
   if (!view) { await vscode.commands.executeCommand('dbtAirflow.lineage.focus'); }
-  const pick = await vscode.window.showQuickPick<vscode.QuickPickItem & { format: 'svg' | 'png'; scale: number }>([
-    { format: 'svg', scale: 1, label: 'SVG (vector, best quality)', description: 'stays sharp at any zoom', detail: 'Opens in browsers, Figma, Inkscape, Keynote and PowerPoint. Smallest file.' },
-    { format: 'png', scale: 3, label: 'PNG, high resolution (3x)', description: 'for slides, documents and chat' },
-    { format: 'png', scale: 6, label: 'PNG, very high resolution (6x)', description: 'for posters; you can zoom in a long way' },
+  type Item = vscode.QuickPickItem & { format: 'svg' | 'png'; scale: number; transparent: boolean };
+  const sep = (label: string): Item => ({ label, kind: vscode.QuickPickItemKind.Separator, format: 'svg', scale: 1, transparent: false });
+  const pick = await vscode.window.showQuickPick<Item>([
+    { format: 'svg', scale: 1, transparent: false, label: 'SVG (vector, best quality)', description: 'stays sharp at any zoom', detail: 'Opens in browsers, Figma, Inkscape, Keynote and PowerPoint. Smallest file.' },
+    { format: 'png', scale: 3, transparent: false, label: 'PNG, high resolution (3x)', description: 'for slides, documents and chat' },
+    { format: 'png', scale: 6, transparent: false, label: 'PNG, very high resolution (6x)', description: 'for posters; you can zoom in a long way' },
+    sep('Transparent background (to place on your own slide or page)'),
+    { format: 'svg', scale: 1, transparent: true, label: 'SVG, transparent background', description: 'vector, no background' },
+    { format: 'png', scale: 3, transparent: true, label: 'PNG (3x), transparent background' },
+    { format: 'png', scale: 6, transparent: true, label: 'PNG (6x), transparent background' },
   ], { title: 'Save the lineage as an image', placeHolder: 'The whole graph is saved, not only what is on screen' });
-  if (pick) view?.webview.postMessage({ type: 'doExport', format: pick.format, scale: pick.scale });
+  if (pick) view?.webview.postMessage({ type: 'doExport', format: pick.format, scale: pick.scale, transparent: pick.transparent });
 }
 
-async function saveImage(m: { error?: string; format?: 'svg' | 'png'; data?: string; width?: number; height?: number; name?: string }) {
+async function saveImage(m: { error?: string; format?: 'svg' | 'png'; data?: string; width?: number; height?: number; name?: string; transparent?: boolean }) {
   if (m.error || !m.data || !m.format) { vscode.window.showWarningMessage(m.error ?? 'There is no graph to save yet.'); return; }
   const base = (m.name ?? 'lineage').replace(/[^A-Za-z0-9._-]+/g, '_');
   const dir = projectDir || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || os.homedir();
-  const target = await vscode.window.showSaveDialog({ defaultUri: vscode.Uri.file(path.join(dir, `${base}-lineage.${m.format}`)), filters: m.format === 'svg' ? { 'SVG image': ['svg'] } : { 'PNG image': ['png'] }, title: 'Save the lineage as an image' });
+  const target = await vscode.window.showSaveDialog({ defaultUri: vscode.Uri.file(path.join(dir, `${base}-lineage${m.transparent ? '-transparent' : ''}.${m.format}`)), filters: m.format === 'svg' ? { 'SVG image': ['svg'] } : { 'PNG image': ['png'] }, title: 'Save the lineage as an image' });
   if (!target) return;
   try {
     await vscode.workspace.fs.writeFile(target, m.format === 'svg' ? Buffer.from(m.data, 'utf8') : Buffer.from(m.data, 'base64'));
-    const c = await vscode.window.showInformationMessage(`Saved ${path.basename(target.fsPath)} (${m.width}×${m.height}${m.format === 'png' ? ' px' : ', vector'}).`, 'Reveal in folder', 'Open');
+    const c = await vscode.window.showInformationMessage(`Saved ${path.basename(target.fsPath)} (${m.width}×${m.height}${m.format === 'png' ? ' px' : ', vector'}${m.transparent ? ', transparent' : ''}).`, 'Reveal in folder', 'Open');
     if (c === 'Reveal in folder') void vscode.commands.executeCommand('revealFileInOS', target);
     else if (c === 'Open') void vscode.env.openExternal(target);
   } catch (e: any) { vscode.window.showErrorMessage(`Could not save the image: ${e?.message ?? e}`); }
@@ -1067,6 +1077,12 @@ async function setupReports(kind: 'reports' | 'critical' = 'reports'): Promise<b
       else if (!i.count) vscode.window.showWarningMessage(`${entry} matches no ${noun}s in this project.`);
     }
   }
+}
+
+/** Opens this extension's settings. The Settings screen starts on the User tab, so values written to the workspace's .vscode/settings.json would not show: open the Workspace tab first. */
+async function openExtensionSettings() {
+  if (vscode.workspace.workspaceFolders?.length) await vscode.commands.executeCommand('workbench.action.openWorkspaceSettings');
+  await vscode.commands.executeCommand('workbench.action.openSettings', '@ext:tchandrap.dbt-airflow-lineage');
 }
 
 /** Opens VS Code's own chat in agent mode with a ready question about the focused model. Offers to turn the optional AI feature on first. */

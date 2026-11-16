@@ -269,6 +269,24 @@
           "default": [],
           "order": 43,
           "markdownDescription": "Entries taken **out** of the critical models again, written like `critical.include`."
+        },
+        "dbtAirflow.pipelines.include": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "order": 35,
+          "markdownDescription": "**Show only** these Airflow pipelines (DAGs). Empty means all of them. Each entry is matched against the DAG name, the file, or a folder the file sits in; `*` stands for any text and `?` for one character, and letter case is ignored:\n\n- `regulatory_reports__acmefin_monthly_15`: one DAG, by name\n- `regulatory_reports__*`: every DAG whose name starts like that\n- `dags/daily_build.py` or `daily_build.py`: the DAGs defined in a file\n- `configs`: every DAG in a folder with that name\n\nExample, to show only one DAG:\n\n```json\n\"dbtAirflow.pipelines.include\": [\"regulatory_reports__acmefin_monthly_15\"]\n```\n\nThe lineage view, the Airflow badges, the Impact panel and the AI answers all use the filtered list. The same DAG name found in several files is always shown once."
+        },
+        "dbtAirflow.pipelines.exclude": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "order": 36,
+          "markdownDescription": "**Hide** these Airflow pipelines (DAGs). Written like `pipelines.include`, and applied after it. Useful to drop generated copies, tests or examples:\n\n```json\n\"dbtAirflow.pipelines.exclude\": [\"generated_dags\", \"*_test\", \"example_*\"]\n```\n\nExcluding a folder of generated DAG files keeps the hand-written definition of the same DAG."
         }
       }
     },

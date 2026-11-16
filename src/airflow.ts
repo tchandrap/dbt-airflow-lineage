@@ -246,7 +246,7 @@ export function parseAirflowFile(file: string, src: string): Pipeline[] {
     const id = `${file}::${name}`;
     let p = pipelines.get(id);
     if (!p) {
-      p = { id, name, file, line: nameKv?.line ?? line, sites: [] };
+      p = { id, name, file, line: nameKv?.line ?? line, sites: [], explicitName: !!(nameKv && asStr(evalExpr(nameKv.value, env)).s) };
       pipelines.set(id, p);
     }
     if (sch && !p.schedule) { const s = asStr(evalExpr(sch.value, env)); p.schedule = s.s ?? sch.value.map((t: any) => t.v ?? '…').join('').slice(0, 60); }
