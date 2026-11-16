@@ -8,7 +8,7 @@ const vscode = acquireVsCodeApi();
 interface Trigger { pid: string; sites: { select: string; exclude?: string; line: number }[] }
 interface IngestRef { dataset?: string; table: string; line: number; match: 'exact' | 'case-insensitive' | 'table-only' }
 interface VNode { id: string; name: string; type: string; kind: string; tags: string[]; path: string; sourceName?: string; triggers: Trigger[]; ingest: { pid: string; refs: IngestRef[] }[] }
-interface Pipe { id: string; name: string; file?: string; schedule?: string; selected: string[] }
+interface Pipe { id: string; name: string; file?: string; schedule?: string; alsoIn?: { file: string; line: number }[]; selected: string[] }
 interface Filter { select: string; exclude: string; tags: string[]; tagMode: 'any' | 'all'; kinds: string[]; scope: 'lineage' | 'project'; hide: boolean; context: boolean }
 interface Payload {
   focus: string; nodes: VNode[]; edges: [string, string][]; pipelines: Pipe[]; depthUp: number; depthDown: number; depthFromSelector: boolean; ai?: boolean; impact?: ImpactInfo; seeds?: string[]; filter: Filter;
@@ -373,8 +373,28 @@ function renderBar() {
 // ---------------------------------------------------------------- save the lineage as an image
 const STYLE_PROPS = ['fill', 'fill-opacity', 'stroke', 'stroke-width', 'stroke-dasharray', 'stroke-opacity', 'opacity', 'font-family', 'font-size', 'font-weight', 'text-anchor', 'letter-spacing', 'display', 'visibility'];
 
+/** Transparent images are meant for any page, so the node boxes are white with dark text (the colored cap, its icon and the badges stay as they are). */
+function lightNode(a: Element): string {
+  const c = a.classList;
+  if (c.contains('body')) {
+    const n = a.closest('.node');
+    const fill = n?.classList.contains('rpt') ? '#fde4e2' : n?.classList.contains('crit') ? '#fdefd0' : '#ffffff';
+    return `;fill:${fill}${n?.classList.contains('sel') ? ';stroke:#111827' : ''}`;
+  }
+  if (c.contains('name')) return ';fill:#111111';
+  if (c.contains('tagtx')) return ';fill:#374151';
+  // the Airflow and ingestion badges: white like the boxes, with a thin outline and dark text
+  const badge = a.closest('.abadge, .ibadge');
+  if (badge) {
+    const ingest = badge.classList.contains('ibadge');
+    if (a.tagName.toLowerCase() === 'rect') return `;fill:#ffffff;stroke:${ingest ? '#0f766e' : '#6b7280'};stroke-width:1.2`;
+    if (a.tagName.toLowerCase() === 'text') return `;fill:${ingest ? '#134e4a' : '#111111'}`;
+  }
+  return '';
+}
+
 /** The whole graph (not only what is on screen) as a standalone SVG: the page's CSS and theme colors are baked into every element. */
-function graphSvg(): { svg: string; w: number; h: number } | null {
+function graphSvg(transparent = false): { svg: string; w: number; h: number } | null {
   const root = document.getElementById('root') as unknown as SVGGElement | null;
   if (!root || !data) return null;
   const bb = root.getBBox();
@@ -384,7 +404,7 @@ function graphSvg(): { svg: string; w: number; h: number } | null {
   const bake = (a: Element, b: Element) => {
     const cs = getComputedStyle(a);
     const prop = (p: string) => (p === 'font-family' ? `${cs.getPropertyValue(p)}, system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif` : cs.getPropertyValue(p)); // fallbacks for viewers without the editor's font
-    b.setAttribute('style', STYLE_PROPS.map((p) => `${p}:${prop(p)}`).join(';'));
+    b.setAttribute('style', STYLE_PROPS.map((p) => `${p}:${prop(p)}`).join(';') + (transparent ? lightNode(a) : ''));
     b.removeAttribute('class');
     for (let i = 0; i < a.children.length; i++) if (b.children[i]) bake(a.children[i], b.children[i]);
   };
@@ -397,15 +417,17 @@ function graphSvg(): { svg: string; w: number; h: number } | null {
   clone.setAttribute('viewBox', `${x} ${y} ${w} ${h}`);
   clone.setAttribute('width', String(w)); clone.setAttribute('height', String(h));
   clone.removeAttribute('style');
-  const back = document.createElementNS(NS, 'rect');
-  back.setAttribute('x', String(x)); back.setAttribute('y', String(y)); back.setAttribute('width', String(w)); back.setAttribute('height', String(h)); back.setAttribute('fill', bg);
-  croot?.parentNode?.insertBefore(back, croot);
+  if (!transparent) { // the editor's background, unless a transparent image was asked for
+    const back = document.createElementNS(NS, 'rect');
+    back.setAttribute('x', String(x)); back.setAttribute('y', String(y)); back.setAttribute('width', String(w)); back.setAttribute('height', String(h)); back.setAttribute('fill', bg);
+    croot?.parentNode?.insertBefore(back, croot);
+  }
   return { svg: `<?xml version="1.0" encoding="UTF-8"?>\n${new XMLSerializer().serializeToString(clone)}`, w, h };
 }
 
 /** The same drawing as a PNG at `scale` times its size (kept inside what a canvas can hold). */
-async function graphPng(scale: number): Promise<{ b64: string; w: number; h: number } | null> {
-  const g = graphSvg();
+async function graphPng(scale: number, transparent = false): Promise<{ b64: string; w: number; h: number } | null> {
+  const g = graphSvg(transparent);
   if (!g) return null;
   const s = Math.max(1, Math.min(scale, 16000 / Math.max(g.w, g.h), Math.sqrt(150e6 / (g.w * g.h))));
   const W = Math.round(g.w * s), H = Math.round(g.h * s);
@@ -421,11 +443,11 @@ async function graphPng(scale: number): Promise<{ b64: string; w: number; h: num
   return { b64: url.slice(url.indexOf(',') + 1), w: W, h: H };
 }
 
-async function doExport(format: 'svg' | 'png', scale: number) {
+async function doExport(format: 'svg' | 'png', scale: number, transparent = false) {
   try {
     const name = data?.nodes.find((n) => n.id === data!.focus)?.name ?? 'lineage';
-    if (format === 'svg') { const g = graphSvg(); if (g) post({ type: 'saveImage', format, data: g.svg, width: g.w, height: g.h, name }); else post({ type: 'saveImage', error: 'There is no graph to save yet.' }); }
-    else { const p = await graphPng(scale); if (p) post({ type: 'saveImage', format, data: p.b64, width: p.w, height: p.h, name }); else post({ type: 'saveImage', error: 'There is no graph to save yet.' }); }
+    if (format === 'svg') { const g = graphSvg(transparent); if (g) post({ type: 'saveImage', format, data: g.svg, width: g.w, height: g.h, name, transparent }); else post({ type: 'saveImage', error: 'There is no graph to save yet.' }); }
+    else { const p = await graphPng(scale, transparent); if (p) post({ type: 'saveImage', format, data: p.b64, width: p.w, height: p.h, name, transparent }); else post({ type: 'saveImage', error: 'There is no graph to save yet.' }); }
   } catch (e: any) { post({ type: 'saveImage', error: `Could not make the image: ${e?.message ?? e}` }); }
 }
 
@@ -542,6 +564,7 @@ function renderAirflow() {
     r.addEventListener('click', () => { activePipeline = activePipeline === p.id ? null : p.id; draw(); renderAirflow(); });
     r.append(h('div', {}, h('b', {}, p.name), h('span', { className: 'muted' }, p.schedule ? `  ${p.schedule}` : '')));
     r.append(h('div', { className: 'muted' }, fileOf(p.file)));
+    if (p.alsoIn?.length) r.append(h('div', { className: 'muted', title: 'The same DAG name is defined in more than one file; they are shown once.' }, 'also defined in ', ...p.alsoIn.flatMap((a, i) => [i ? ', ' : '', h('a', { style: 'cursor:pointer', onclick: (e: Event) => { e.stopPropagation(); post({ type: 'openPipeline', id: p.id, file: a.file, line: a.line }); } }, fileOf(a.file))])));
     lines.forEach((l) => r.append(l));
     r.append(h('div', { className: 'row' },
       h('button', { className: 'sec', onclick: (e: Event) => { e.stopPropagation(); post({ type: 'openPipeline', id: p.id, line }); } }, 'Open DAG'),
@@ -1275,7 +1298,7 @@ window.addEventListener('message', (ev) => {
     return;
   }
   if (m?.type === 'sync') { showSync(m); return; }
-  if (m?.type === 'doExport') { void doExport(m.format === 'png' ? 'png' : 'svg', Number(m.scale) || 3); return; }
+  if (m?.type === 'doExport') { void doExport(m.format === 'png' ? 'png' : 'svg', Number(m.scale) || 3, !!m.transparent); return; }
   if (m?.type === 'busy') {
     document.getElementById('busy')!.classList.toggle('on', !!m.on);
     const t = document.getElementById('busytxt')!;

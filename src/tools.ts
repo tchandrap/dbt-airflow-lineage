@@ -165,7 +165,7 @@ export function pipelinesFor(idx: LineageIndex, ref: string): string {
   const lines: string[] = [];
   for (const t of idx.triggersFor(r.id)) {
     const s = t.sites.map((x) => `${x.namedSelector ? `--selector ${x.namedSelector}` : x.select ?? '(dynamic)'}${x.exclude ? ` --exclude ${x.exclude}` : ''}`).join(' | ');
-    lines.push(`runs: ${t.pipeline.name} (${t.pipeline.file}${t.pipeline.schedule ? `, schedule ${t.pipeline.schedule}` : ''}) via ${s}`);
+    lines.push(`runs: ${t.pipeline.name} (${t.pipeline.file}${t.pipeline.schedule ? `, schedule ${t.pipeline.schedule}` : ''}${t.pipeline.alsoIn?.length ? `; also defined in ${t.pipeline.alsoIn.map((a) => a.file).join(', ')}` : ''}) via ${s}`);
   }
   for (const i of idx.ingestorsFor(r.id)) lines.push(`loads the table: ${i.pipeline.name} (${i.pipeline.file})`);
   return lines.length ? `${g.nodes[r.id].name}:\n${lines.join('\n')}` : `${g.nodes[r.id].name}: no Airflow pipeline runs or loads it.`;

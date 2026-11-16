@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- The same DAG name defined in several files (a config file and the DAG file generated from it, for example) is now one pipeline in the Airflow dialog, with an "also defined in" link, and the Airflow badge counts it once.
+- New settings `dbtAirflow.pipelines.include` and `dbtAirflow.pipelines.exclude` choose which DAGs are shown, by DAG name, file or folder with wildcards (for example `["regulatory_reports__acmefin_monthly_15"]` shows only that DAG). The lineage view, the Impact panel and the AI answers use the filtered list.
+- Fix: saving the lineage as a PNG failed inside the editor ("the browser could not draw the SVG") because the view's security policy blocked the image it draws from. SVG export was not affected.
+- Saving the lineage as an image can now use a **transparent background** (SVG, PNG 3x or PNG 6x), for placing it on your own slide or page. In that case the node boxes are white with black text, so it reads on any background, and the Airflow badges become white pills with a thin outline and a black count.
+- The settings button now opens the Workspace tab first, so values set in the workspace's `.vscode/settings.json` show up (the Settings screen starts on the User tab).
+
 ## 0.2.0 — 2026-11-01
 
 - Optional AI (off by default, `dbtAirflow.ai.enabled`): ask your editor's AI agent which reports a model change impacts, which pipelines run it, what a selector picks. Settings `dbtAirflow.reports.include` / `exclude` define a report: a list of sources that are combined (`exposures`, `tag:report`, `folder:reporting`, `file:rpt_pnl.sql`, `path:…`, or any dbt selector), minus an exclude list.
