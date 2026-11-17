@@ -1,10 +1,45 @@
 # dbt airflow lineage
 
-A VS Code extension that draws your **dbt lineage** and shows, on every model, **which Airflow pipelines run it** and **which pipeline ingests it**. It understands dbt selectors (`tag:daily`, `model+`, `1+model+1`, `--exclude …`), so the pipelines you see are the ones whose selection really includes the model.
+**Know which reports and pipelines a dbt change will break, and ask your AI agent about it.** A VS Code / Cursor extension that draws your dbt lineage, shows which Airflow pipelines run and ingest every model, and understands dbt selectors (`tag:daily`, `model+`, `1+model+1`, `--exclude …`).
 
-![A 40-second tour: lineage, Airflow pipelines, selector search, exploring with +, Impact, saving an image, Ask AI with a local MCP server, and the settings](docs/demo.gif)
+![Impact and chat with your lineage, on a made-up shop project: click a model, press Impact to see the reports and critical models it reaches, then ask your AI agent the same question](docs/demo-impact-chat.gif)
 
-*A 40-second tour on a made-up shop project: click a model, see which Airflow pipelines run it, search with dbt selectors, explore with the + buttons, check the impact of a change, save the graph as an image, set up Ask AI with its local MCP server, and open the settings. The small boxes marked "illustration of the editor dialog" stand in for the editor's own dialogs, which a recording of the graph view cannot capture; their texts and the tool answers come from the extension itself.*
+## Impact: what does my change break?
+
+Click a model and press **Impact**. Only the paths to the **reports** and **critical models** it reaches are drawn (critical models amber, reports red), and a panel lists each one with its path and the Airflow pipelines, with schedules, that run it. You decide what counts as a report or a critical model: dbt exposures, tags, folders, files or any dbt selector.
+
+![The Impact panel: one report and two critical models reached from a model, each with its path and the pipelines that run it](docs/impact.png)
+
+## Chat with your lineage
+
+Turn on **Ask AI** (optional, off by default) and your editor's agent answers from your real graph instead of guessing:
+
+- "What breaks if I change `dim_customer`?"
+- "Which reports does `stg_orders` impact, and which pipelines run them?"
+- "Which pipeline runs `fct_loan`, and when?"
+- "What does `tag:daily+` select?"
+
+![An agent asks the local lineage tool which reports a change impacts and gets the answer with paths, pipelines and schedules](docs/chat.png)
+
+It uses a bundled, **local, read-only** MCP server: no network, no API key. In Cursor it is set up for you; in VS Code it adds tools for the VS Code agent. It also connects to Claude Code, Claude Desktop, OpenAI Codex CLI or any MCP client (ChatGPT only connects to servers on the internet, so it cannot use a local one). The AI only receives model, report and pipeline names, never SQL or data.
+
+*Pictures use a made-up shop project. The chat window is an illustration of the editor's agent; the answer text comes from the extension itself.*
+
+## What's new
+
+**0.2.1**
+- One pipeline per DAG name: a DAG defined in a config file and in the file generated from it is shown once, with an "also defined in" link.
+- New settings `dbtAirflow.pipelines.include` / `exclude` to show only the DAGs you care about.
+- Save the graph as SVG or PNG with a **transparent background** (white boxes, black text) for slides and docs.
+- Fix: saving as PNG now works inside the editor.
+
+**0.2.0**
+- **Impact** button: the reports and critical models a change reaches, with paths and the pipelines that run them.
+- **Chat with your lineage** through **Ask AI** (optional, off by default), backed by a local, read-only MCP server for Cursor, VS Code, Claude Code, Claude Desktop and Codex CLI.
+- **Critical models** next to reports, both defined in settings with exposures, tags, folders, files or dbt selectors.
+- Save the lineage as an image (SVG, PNG 3x or 6x), and progress bars for the long jobs.
+
+See the [full changelog](CHANGELOG.md).
 
 ## What you get
 
@@ -15,10 +50,15 @@ A VS Code extension that draws your **dbt lineage** and shows, on every model, *
 - **Filter** by select, exclude, resource type, and model materialization (table, view, incremental, ephemeral, materialized view). **Find in graph** dims everything but the nodes you type.
 - **Edit the YAML without leaving the graph.** The model dialog shows description, tags, config, meta, tests, and columns from the model's properties file. Edit them and press **Submit**; only the lines you changed are written, so comments and formatting stay untouched.
 - **Explore with +.** The models at the edge of the graph have a **+** button that shows their downstream (right) or upstream (left) models, one level at a time, without changing your Upstream / Downstream numbers. The search box always shows the shortest dbt selector for what is on screen.
-- **Impact.** Click **Impact** to see which **critical models** and **reports** a change to the focused model reaches. Only the paths are drawn (critical models amber, reports red), and a panel lists each one with its path and the Airflow pipelines (and schedules) that run it. What counts as a report or a critical model is yours to define, as a combined list: dbt exposures, tags, folders, files, or any dbt selector.
-- **Save as an image.** The download button saves the whole graph as an **SVG** (sharp at any zoom) or a high-resolution **PNG** (3x or 6x).
-- **Optional AI.** Off by default. **Ask AI** lets your editor's agent ask the extension about your lineage: which reports a change impacts, which pipelines run a model, what a selector picks. In Cursor it sets up a **local MCP server** (bundled, read-only, no network); in VS Code it adds tools for the VS Code agent. It can also be connected to Claude Code, Claude Desktop, OpenAI Codex CLI or any MCP client. The AI only receives model, report and pipeline names, never SQL or data. (ChatGPT only connects to servers on the internet, so it cannot use a local one.)
+- **Save as an image.** The download button saves the whole graph as an **SVG** (sharp at any zoom) or a high-resolution **PNG** (3x or 6x), optionally with a **transparent background** to drop onto a slide or page.
+- **Clean pipeline list.** The same DAG name defined in several files (a config file and the DAG generated from it) shows as one pipeline. `dbtAirflow.pipelines.include` / `exclude` choose which DAGs are shown, by name, file or folder with wildcards.
 - **Optional Airflow.** Lineage works on its own. Add a local DAG folder, or mirror DAGs from a Google Cloud Storage bucket, whenever you want pipelines.
+
+### A 40-second tour
+
+![A 40-second tour: lineage, Airflow pipelines, selector search, exploring with +, Impact, saving an image, Ask AI with a local MCP server, and the settings](docs/demo.gif)
+
+*A made-up shop project. The small boxes marked "illustration of the editor dialog" stand in for the editor's own dialogs, which a recording of the graph view cannot capture; their texts and the tool answers come from the extension itself.*
 
 |  |  |
 |---|---|
@@ -123,6 +163,7 @@ Search for "dbt Airflow" in Settings, or edit `settings.json`:
 | `dbtAirflow.dbtCommand` | `dbt` | Command used by **Run dbt parse**. |
 | `dbtAirflow.reports.include` / `exclude` | `[]` | What counts as a **report**. Combined entries: `exposures`, `tag:report`, `folder:reporting`, `file:rpt_pnl.sql`, `path:models/marts`, or any dbt selector. |
 | `dbtAirflow.critical.include` / `exclude` | `[]` | Which models are **critical**, written the same way (for example `tag:critical`). |
+| `dbtAirflow.pipelines.include` / `exclude` | `[]` | Show only some DAGs (or hide some), by DAG name, file or folder, with wildcards (for example `["my_dag"]`). |
 | `dbtAirflow.ai.enabled` | `false` | Optional AI (see above). The **Ask AI** button asks before turning it on. |
 
 Every setting has a longer description with examples in the Settings screen. Example:

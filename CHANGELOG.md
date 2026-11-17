@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.2 — 2026-11-17
+
+- New Marketplace description and README that lead with the two main features: **Impact** (which reports and critical models a change reaches, with the pipelines that run them) and **chat with your lineage** (your AI agent answers from the real graph through the local, read-only MCP server). Includes a new short demo, screenshots and example questions, plus a "What's new" section.
+- The 40-second tour is re-recorded.
+- No change to how the extension works.
+
 ## 0.2.1 — 2026-11-17
 
 - The same DAG name defined in several files (a config file and the DAG file generated from it, for example) is now one pipeline in the Airflow dialog, with an "also defined in" link, and the Airflow badge counts it once.

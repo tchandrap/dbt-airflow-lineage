@@ -1,8 +1,8 @@
 {
   "name": "dbt-airflow-lineage",
   "displayName": "dbt airflow lineage",
-  "description": "Interactive dbt lineage graph that also shows which Airflow pipelines run and ingest each model, resolving dbt selectors (tags, graph operators, excludes). Edit model YAML in place.",
-  "version": "0.2.1",
+  "description": "Know which reports and pipelines a dbt change breaks, and chat with your lineage through your AI agent (optional, local, read-only). dbt lineage graph with the Airflow pipelines that run and ingest each model.",
+  "version": "0.2.2",
   "publisher": "tchandrap",
   "license": "MIT",
   "author": {
@@ -32,7 +32,10 @@
     "selectors",
     "sql",
     "yaml",
-    "analytics engineering"
+    "analytics engineering",
+    "impact analysis",
+    "mcp",
+    "ai"
   ],
   "categories": [
     "Visualization",
